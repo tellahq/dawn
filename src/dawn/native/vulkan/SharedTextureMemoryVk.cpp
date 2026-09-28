@@ -997,8 +997,9 @@ MaybeError SharedTextureMemory::BeginAccessImpl(
                     texture->GetFormat().format);
 
     wgpu::SType type;
-    DAWN_TRY_ASSIGN(
-        type, (descriptor.ValidateBranches<Branch<SharedTextureMemoryVkImageLayoutBeginState>>()));
+    DAWN_TRY_ASSIGN(type,
+                    (descriptor.ValidateBranches<Branch<SharedTextureMemoryVkImageLayoutBeginState,
+                                                        SharedTextureMemoryVkBeginState>>()));
     DAWN_ASSERT(type == wgpu::SType::SharedTextureMemoryVkImageLayoutBeginState);
 
     auto vkLayoutBeginState = descriptor.Get<SharedTextureMemoryVkImageLayoutBeginState>();
@@ -1009,9 +1010,14 @@ MaybeError SharedTextureMemory::BeginAccessImpl(
         DAWN_INVALID_IF(descriptor->signaledValues[i] != 1, "%s signaled value (%u) was not 1.",
                         descriptor->fences[i], descriptor->signaledValues[i]);
     }
+    bool requiresEndAccessFence = true;
+    if (auto* vkBeginState = descriptor.Get<SharedTextureMemoryVkBeginState>()) {
+        requiresEndAccessFence = vkBeginState->requiresEndAccessFence;
+    }
+
     static_cast<SharedTexture*>(texture)->SetPendingAcquire(
         static_cast<VkImageLayout>(vkLayoutBeginState->oldLayout),
-        static_cast<VkImageLayout>(vkLayoutBeginState->newLayout));
+        static_cast<VkImageLayout>(vkLayoutBeginState->newLayout), requiresEndAccessFence);
 
     // TODO(crbug.com/449708316): Better identify textures used as a swapchain.
     ToBackend(texture)->SetIsExternalSwapchainTexture(true);
@@ -1060,6 +1066,12 @@ ResultOrError<FenceAndSignalValue> SharedTextureMemory::EndAccessImpl(
         handle = utils::SystemHandle::Acquire(semaphoreHandle);
         vkLayoutEndState->oldLayout = releasedOldLayout;
         vkLayoutEndState->newLayout = releasedNewLayout;
+    }
+
+    // The access was begun with requiresEndAccessFence = false: no semaphore was signaled.
+    if (!handle.IsValid()) {
+        ToBackend(texture)->NotifySwapChainPresent();
+        return FenceAndSignalValue{nullptr, 0};
     }
 
     Ref<SharedFence> fence;

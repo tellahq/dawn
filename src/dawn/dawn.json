@@ -2225,6 +2225,15 @@
             {"name": "is swapchain", "type": "bool", "default": "false"}
         ]
     },
+    "shared texture memory vk begin state": {
+        "category": "structure",
+        "chained": "in",
+        "chain roots": ["shared texture memory begin access descriptor"],
+        "tags": ["dawn", "native"],
+        "members": [
+            {"name": "requires end access fence", "type": "bool", "default": "true"}
+        ]
+    },
     "shared texture memory D3D11 begin state": {
         "category": "structure",
         "chained": "in",
@@ -4121,7 +4130,8 @@
             {"value": 79, "name": "request adapter options angle virtualization group", "tags": ["dawn", "native"]},
             {"value": 80, "name": "pipeline layout resource table", "tags": ["dawn"]},
             {"value": 81, "name": "adapter properties explicit compute subgroup size configs", "tags": ["dawn"]},
-            {"value": 82, "name": "adapter properties drm", "tags": ["dawn", "native"]}
+            {"value": 82, "name": "adapter properties drm", "tags": ["dawn", "native"]},
+            {"value": 85, "name": "shared texture memory vk begin state", "tags": ["dawn", "native"]}
         ]
     },
     "texture": {

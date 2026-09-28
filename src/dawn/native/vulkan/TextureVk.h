@@ -259,6 +259,11 @@ class ImportedTextureBase : public Texture {
     ExternalSemaphoreHandle mExternalSemaphoreHandle = kNullExternalSemaphoreHandle;
     // The pending semaphore
     VkSemaphore mPendingSemaphore = VK_NULL_HANDLE;
+    // Whether submits during the current access signal an exportable semaphore that EndAccess
+    // returns as a fence. Embedders that synchronize with the importer on their own can opt out
+    // with SharedTextureMemoryVkBeginState::requiresEndAccessFence = false, which saves creating,
+    // exporting and destroying a semaphore per texture per submit.
+    bool mRequiresEndAccessFence = true;
 };
 
 // A texture created from an VkImage that references an external memory object.
@@ -303,7 +308,8 @@ class SharedTexture final : public ImportedTextureBase {
     MaybeError OnBeforeSubmit(CommandRecordingContext* context) override;
 
     void SetPendingAcquire(VkImageLayout pendingAcquireOldLayout,
-                           VkImageLayout pendingAcquireNewLayout);
+                           VkImageLayout pendingAcquireNewLayout,
+                           bool requiresEndAccessFence);
 
   private:
     using ImportedTextureBase::ImportedTextureBase;

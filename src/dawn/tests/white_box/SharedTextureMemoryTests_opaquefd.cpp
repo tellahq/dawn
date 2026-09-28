@@ -195,7 +195,9 @@ bool CheckFormatSupport(native::vulkan::Device* deviceVk,
                &formatProperties)) == VK_SUCCESS;
 }
 
-template <wgpu::FeatureName FenceFeature, bool DedicatedAllocation>
+template <wgpu::FeatureName FenceFeature,
+          bool DedicatedAllocation,
+          bool RequiresEndAccessFence = true>
 class Backend : public SharedTextureMemoryTestVulkanBackend {
   public:
     static SharedTextureMemoryTestBackend* GetInstance() {
@@ -218,7 +220,44 @@ class Backend : public SharedTextureMemoryTestVulkanBackend {
             default:
                 DAWN_UNREACHABLE();
         }
+        if (!RequiresEndAccessFence) {
+            name += ", NoEndAccessFence";
+        }
         return name;
+    }
+
+    // Without end access fences, the embedder synchronizes on its own, which the tests can only
+    // do by staying on one device.
+    bool UseSameDevice() const override { return !RequiresEndAccessFence; }
+
+    std::unique_ptr<BackendBeginState> ChainInitialBeginState(
+        wgpu::SharedTextureMemoryBeginAccessDescriptor* beginDesc) override {
+        return ChainVkBeginState(
+            beginDesc, SharedTextureMemoryTestVulkanBackend::ChainInitialBeginState(beginDesc));
+    }
+
+    std::unique_ptr<BackendBeginState> ChainBeginState(
+        wgpu::SharedTextureMemoryBeginAccessDescriptor* beginDesc,
+        const wgpu::SharedTextureMemoryEndAccessState& endState) override {
+        return ChainVkBeginState(beginDesc, SharedTextureMemoryTestVulkanBackend::ChainBeginState(
+                                                beginDesc, endState));
+    }
+
+    struct BeginStateWithVkBeginState : public BackendBeginState {
+        std::unique_ptr<BackendBeginState> layouts;
+        wgpu::SharedTextureMemoryVkBeginState vkBeginState{};
+    };
+
+    // Appends a SharedTextureMemoryVkBeginState after the image layouts chained by `layouts`.
+    std::unique_ptr<BackendBeginState> ChainVkBeginState(
+        wgpu::SharedTextureMemoryBeginAccessDescriptor* beginDesc,
+        std::unique_ptr<BackendBeginState> layouts) {
+        auto state = std::make_unique<BeginStateWithVkBeginState>();
+        state->layouts = std::move(layouts);
+        state->vkBeginState.requiresEndAccessFence = RequiresEndAccessFence;
+        const_cast<wgpu::ChainedStruct*>(beginDesc->nextInChain)->nextInChain =
+            &state->vkBeginState;
+        return state;
     }
 
     std::vector<wgpu::FeatureName> RequiredFeatures(const wgpu::Adapter&) const override {
@@ -301,6 +340,50 @@ class Backend : public SharedTextureMemoryTestVulkanBackend {
 };
 
 class SharedTextureMemoryOpaqueFDValidationTest : public SharedTextureMemoryTests {};
+
+class SharedTextureMemoryOpaqueFDEndAccessFenceTest : public SharedTextureMemoryTests {
+  protected:
+    // Begins access with `beginState` chained after the image layouts, renders to the texture and
+    // ends access. Returns the number of fences EndAccess exported.
+    size_t RenderAndEndAccess(wgpu::SharedTextureMemory& memory,
+                              wgpu::Texture& texture,
+                              wgpu::SharedTextureMemoryVkBeginState* beginState) {
+        wgpu::SharedTextureMemoryVkImageLayoutBeginState layouts{};
+        layouts.nextInChain = beginState;
+        wgpu::SharedTextureMemoryBeginAccessDescriptor beginDesc{};
+        beginDesc.nextInChain = &layouts;
+        beginDesc.initialized = true;
+        EXPECT_TRUE(memory.BeginAccess(texture, &beginDesc));
+
+        UseInRenderPass(device, texture);
+
+        wgpu::SharedTextureMemoryVkImageLayoutEndState layoutsOut{};
+        wgpu::SharedTextureMemoryEndAccessState endState{};
+        endState.nextInChain = &layoutsOut;
+        EXPECT_TRUE(memory.EndAccess(texture, &endState));
+        return endState.fenceCount;
+    }
+};
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SharedTextureMemoryOpaqueFDEndAccessFenceTest);
+
+// Test that requiresEndAccessFence = false makes EndAccess export no fence, that it only applies to
+// the access it was passed to, and that the default still exports one.
+TEST_P(SharedTextureMemoryOpaqueFDEndAccessFenceTest, RequiresEndAccessFence) {
+    wgpu::SharedTextureMemory memory = GetParam().mBackend->CreateSharedTextureMemory(device, 1);
+    wgpu::Texture texture = memory.CreateTexture();
+
+    wgpu::SharedTextureMemoryVkBeginState noFence{};
+    noFence.requiresEndAccessFence = false;
+    EXPECT_EQ(RenderAndEndAccess(memory, texture, &noFence), 0u);
+
+    EXPECT_GT(RenderAndEndAccess(memory, texture, nullptr), 0u);
+
+    wgpu::SharedTextureMemoryVkBeginState withFence{};
+    EXPECT_TRUE(withFence.requiresEndAccessFence);
+    EXPECT_GT(RenderAndEndAccess(memory, texture, &withFence), 0u);
+
+    EXPECT_EQ(RenderAndEndAccess(memory, texture, &noFence), 0u);
+}
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SharedTextureMemoryOpaqueFDValidationTest);
 
 // Test that the Vulkan image must be created with VK_IMAGE_USAGE_TRANSFER_DST_BIT.
@@ -520,12 +603,22 @@ DAWN_INSTANTIATE_PREFIXED_TEST_P(
 
 DAWN_INSTANTIATE_PREFIXED_TEST_P(
     Vulkan,
+    SharedTextureMemoryOpaqueFDEndAccessFenceTest,
+    {VulkanBackend()},
+    {Backend<wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD, false>::GetInstance(),
+     Backend<wgpu::FeatureName::SharedFenceSyncFD, false>::GetInstance()},
+    {1});
+
+DAWN_INSTANTIATE_PREFIXED_TEST_P(
+    Vulkan,
     SharedTextureMemoryTests,
     {VulkanBackend()},
     {Backend<wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD, false>::GetInstance(),
      Backend<wgpu::FeatureName::SharedFenceSyncFD, false>::GetInstance(),
      Backend<wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD, true>::GetInstance(),
-     Backend<wgpu::FeatureName::SharedFenceSyncFD, true>::GetInstance()},
+     Backend<wgpu::FeatureName::SharedFenceSyncFD, true>::GetInstance(),
+     Backend<wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD, false,
+             /*RequiresEndAccessFence=*/false>::GetInstance()},
     {1});
 
 }  // anonymous namespace
