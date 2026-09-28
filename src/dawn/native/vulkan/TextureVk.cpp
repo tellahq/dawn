@@ -1793,6 +1793,8 @@ MaybeError ImportedTextureBase::EndAccess(ExternalSemaphoreHandle* handle,
                                           VkImageLayout* releasedNewLayout) {
     DAWN_ASSERT(GetNumMipLevels() == 1 && GetArrayLayers() == 1);
 
+    const bool eagerlyTransitioned = mExternalState == ExternalState::EagerlyTransitioned;
+
     // Release the texture
     mExternalState = ExternalState::Released;
 
@@ -1811,7 +1813,12 @@ MaybeError ImportedTextureBase::EndAccess(ExternalSemaphoreHandle* handle,
     // We have to manually trigger a transition if the texture hasn't been actually used or if we
     // need a layout transition.
     // TODO(dawn:1509): Avoid the empty submit.
-    if (mExternalSemaphoreHandle == kNullExternalSemaphoreHandle || targetLayout != currentLayout) {
+    // Without an end access fence there is no semaphore to wait for, so a submit is only needed
+    // to record the queue release when no submit has done it yet.
+    const bool needsReleaseSubmit = mRequiresEndAccessFence
+                                        ? mExternalSemaphoreHandle == kNullExternalSemaphoreHandle
+                                        : !eagerlyTransitioned;
+    if (needsReleaseSubmit || targetLayout != currentLayout) {
         mDesiredExportLayout = targetLayout;
 
         Queue* queue = ToBackend(GetDevice()->GetQueue());
@@ -1821,7 +1828,8 @@ MaybeError ImportedTextureBase::EndAccess(ExternalSemaphoreHandle* handle,
 
         currentLayout = targetLayout;
     }
-    DAWN_ASSERT(mExternalSemaphoreHandle != kNullExternalSemaphoreHandle);
+    DAWN_ASSERT(!mRequiresEndAccessFence ||
+                mExternalSemaphoreHandle != kNullExternalSemaphoreHandle);
 
     // Write out the layouts and signal semaphore
     *releasedOldLayout = currentLayout;
@@ -1838,6 +1846,10 @@ MaybeError ImportedTextureBase::OnBeforeSubmit(CommandRecordingContext* context)
     // synchronization.
     TransitionEagerlyForExport(context);
 
+    if (!mRequiresEndAccessFence) {
+        return {};
+    }
+
     // Create the external semaphore and add it to be signaled, but only mark it pending: if
     // anything fails during the submit we still keep the previously signaled exportable semaphore.
     // Note that VUID-VkSemaphoreGetFdInfoKHR-handleType-01135 requires that only signaled
@@ -1850,6 +1862,11 @@ MaybeError ImportedTextureBase::OnBeforeSubmit(CommandRecordingContext* context)
 }
 
 MaybeError ImportedTextureBase::OnAfterSubmit() {
+    if (!mRequiresEndAccessFence) {
+        DAWN_ASSERT(mPendingSemaphore == VK_NULL_HANDLE);
+        return {};
+    }
+
     Device* device = ToBackend(GetDevice());
 
     // The submit succeeded, we can replace the previous external semaphore with the pending one.
@@ -2050,13 +2067,15 @@ void SharedTexture::Initialize(SharedTextureMemory* memory) {
 }
 
 void SharedTexture::SetPendingAcquire(VkImageLayout pendingAcquireOldLayout,
-                                      VkImageLayout pendingAcquireNewLayout) {
+                                      VkImageLayout pendingAcquireNewLayout,
+                                      bool requiresEndAccessFence) {
     DAWN_ASSERT(GetSharedResourceMemoryContents() != nullptr);
     mExternalState = ExternalState::PendingAcquire;
     mLastExternalState = ExternalState::PendingAcquire;
 
     mPendingAcquireOldLayout = pendingAcquireOldLayout;
     mPendingAcquireNewLayout = pendingAcquireNewLayout;
+    mRequiresEndAccessFence = requiresEndAccessFence;
 }
 
 MaybeError SharedTexture::OnBeforeSubmit(CommandRecordingContext* context) {
