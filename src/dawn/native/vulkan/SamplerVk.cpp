@@ -25,16 +25,16 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/vulkan/SamplerVk.h"
+#include "src/dawn/native/vulkan/SamplerVk.h"
 
 #include <algorithm>
 
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/vulkan/DeviceVk.h"
-#include "dawn/native/vulkan/FencedDeleter.h"
-#include "dawn/native/vulkan/TextureVk.h"
-#include "dawn/native/vulkan/UtilsVulkan.h"
-#include "dawn/native/vulkan/VulkanError.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/vulkan/DeviceVk.h"
+#include "src/dawn/native/vulkan/FencedDeleter.h"
+#include "src/dawn/native/vulkan/TextureVk.h"
+#include "src/dawn/native/vulkan/UtilsVulkan.h"
+#include "src/dawn/native/vulkan/VulkanError.h"
 #include "vulkan/vulkan_core.h"
 
 namespace dawn::native::vulkan {
@@ -144,6 +144,26 @@ MaybeError Sampler::Initialize(const SamplerDescriptor* descriptor) {
         samplerYCbCrInfo.conversion = mSamplerYCbCrConversion;
 
         createInfo.pNext = &samplerYCbCrInfo;
+
+        // VUID-VkSamplerCreateInfo-addressModeU-01646 requires CLAMP_TO_EDGE on every axis and
+        // anisotropy disabled when VkSamplerYcbcrConversionInfo is provided.
+        createInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.anisotropyEnable = VK_FALSE;
+
+        // VUID-VkSamplerCreateInfo-minFilter-01645:
+        // When VkSamplerYcbcrConversionInfo is used with an external format or VK_FORMAT_UNDEFINED,
+        // minFilter and magFilter must be equal to chromaFilter.
+        // TODO(https://crbug.com/497675620): Check for
+        // VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT in
+        // the future.
+        const auto& yCbCrDesc = GetYCbCrVkDescriptor();
+        if (yCbCrDesc.externalFormat != 0 || yCbCrDesc.vkFormat == VK_FORMAT_UNDEFINED) {
+            VkFilter chromaFilter = ToVulkanSamplerFilter(yCbCrDesc.vkChromaFilter);
+            createInfo.minFilter = chromaFilter;
+            createInfo.magFilter = chromaFilter;
+        }
     }
 
     DAWN_TRY(CheckVkSuccess(
@@ -203,6 +223,19 @@ StaticSamplerSpecialization StaticSamplerSpecialization::From(const TextureView*
 
         spec.vkFormat = static_cast<VkFormat>(stm->GetYCbCrVkDesc().vkFormat);
         spec.androidExternalFormat = stm->GetYCbCrVkDesc().externalFormat;
+
+        // VUID-VkSamplerCreateInfo-minFilter-01645:
+        // When using an external format or VK_FORMAT_UNDEFINED, minFilter and magFilter must
+        // match the chroma filter.
+        // TODO(https://crbug.com/497675620): Check for
+        // VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT in
+        // the future.
+        if (spec.androidExternalFormat != 0 || spec.vkFormat == VK_FORMAT_UNDEFINED) {
+            YCbCrVkDescriptor yCbCrDesc =
+                GetYCbCrForTextureView(spec.vkFormat, spec.androidExternalFormat);
+            spec.minFilter = yCbCrDesc.vkChromaFilter;
+            spec.magFilter = yCbCrDesc.vkChromaFilter;
+        }
     }
 
     return spec;
@@ -211,7 +244,7 @@ StaticSamplerSpecialization StaticSamplerSpecialization::From(const TextureView*
 // static
 YCbCrVkDescriptor StaticSamplerSpecialization::GetYCbCrForTextureView(
     VkFormat vkFormat,
-    uint32_t androidExternalFormat) {
+    uint64_t androidExternalFormat) {
     YCbCrVkDescriptor yCbCrDesc;
     yCbCrDesc.vkFormat = vkFormat;
     yCbCrDesc.externalFormat = androidExternalFormat;

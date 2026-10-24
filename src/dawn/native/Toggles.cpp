@@ -25,14 +25,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/Toggles.h"
+#include "src/dawn/native/Toggles.h"
 
 #include <array>
 
-#include "dawn/common/Assert.h"
-#include "dawn/common/Log.h"
-#include "dawn/native/dawn_platform.h"
-#include "dawn/native/stream/Stream.h"
+#include "src/dawn/native/dawn_platform.h"
+#include "src/dawn/native/stream/Stream.h"
+#include "src/utils/assert.h"
+#include "src/utils/compiler.h"
+#include "src/utils/log.h"
 
 namespace dawn::native {
 namespace {
@@ -164,9 +165,7 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
       "This setting is used to test bindgroup encoding.",
       "https://crbug.com/dawn/155", ToggleStage::Device}},
     {Toggle::UseDXC,
-     {"use_dxc",
-      "Use DXC instead of FXC for compiling HLSL when both dxcompiler.dll and dxil.dll is "
-      "available.",
+     {"use_dxc", "Use DXC instead of FXC for compiling HLSL when dxcompiler.dll is available.",
       "https://crbug.com/dawn/402", ToggleStage::Adapter}},
     {Toggle::DisableRobustness,
      {"disable_robustness", "Disable robust buffer access", "https://crbug.com/dawn/480",
@@ -397,13 +396,12 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
     {Toggle::MetalPolyfillTanhF16,
      {"metal_polyfill_tanh_f16", "Polyfill tanh with an f16 value for MSL.",
       "https://crbug.com/42251267", ToggleStage::Device}},
-    {Toggle::VulkanPolyfillF32Negation,
-     {"spirv_polyfill_f32_negation",
-      "Polyfill f32 negation with bit manipulation in SPIR-V writer.",
+    {Toggle::VulkanPolyfillFloatNegation,
+     {"spirv_polyfill_float_negation", "Polyfill f32 and f16 negation.",
       "https://crbug.com/448294721", ToggleStage::Device}},
-    {Toggle::VulkanPolyfillF32Abs,
-     {"spirv_polyfill_f32_abs", "Polyfill f32 abs with bit manipulation in SPIR-V writer.",
-      "https://crbug.com/448294721", ToggleStage::Device}},
+    {Toggle::VulkanPolyfillFloatAbs,
+     {"spirv_polyfill_float_abs", "Polyfill f32 and f16 abs.", "https://crbug.com/448294721",
+      ToggleStage::Device}},
     {Toggle::MetalFillEmptyOcclusionQueriesWithZero,
      {"metal_fill_empty_occlusion_queries_with_zero",
       "Apple GPUs leave stale results in the visibility result buffer instead of writing zero if "
@@ -481,11 +479,6 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
       "Use a blit instead of a copy command to copy float16 texture to a texture or a buffer."
       "Workaround for OpenGLES.",
       "https://crbug.com/381214487", ToggleStage::Device}},
-    {Toggle::UseBlitForFloat32TextureCopy,
-     {"use_blit_for_float_32_texture_copy",
-      "Use a blit instead of a copy command to copy float32 texture to a texture or a buffer."
-      "Workaround for OpenGLES.",
-      "https://crbug.com/381214487", ToggleStage::Device}},
     {Toggle::UseBlitForT2B,
      {"use_blit_for_t2b",
       "Use a compute based blit instead of a copy command to copy texture with supported format to "
@@ -496,10 +489,47 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
       "Use a shader based blit instead of a copy command to copy a buffer to a texture with "
       "supported format.",
       "https://crbug.com/dawn/348653642", ToggleStage::Device}},
-    {Toggle::GLUseArrayLengthFromUniform,
-     {"gl_use_array_length_from_uniform",
-      "Use arrayLengthFromUniform transform to replace arrayLength() function calls of dynamic "
-      "storage buffers."
+    {Toggle::UseBlitForNonRGBAUnormTextureToBufferCopy,
+     {"use_blit_for_non_rgba_unorm_texture_to_buffer_copy",
+      "Use a blit instead of a copy command to copy non-RGBA unorm textures to a buffer. "
+      "Workaround for OpenGLES.",
+      "https://issues.chromium.org/issues/556959073", ToggleStage::Device}},
+    {Toggle::UseBlitForNonRGBAFloatTextureToBufferCopy,
+     {"use_blit_for_non_rgba_float_texture_to_buffer_copy",
+      "Use a blit instead of a copy command to copy non-RGBA float textures to a buffer. "
+      "Workaround for OpenGLES.",
+      "https://issues.chromium.org/issues/556959073", ToggleStage::Device}},
+    {Toggle::UseBlitForUintTextureToBufferCopy,
+     {"use_blit_for_uint_texture_to_buffer_copy",
+      "Use a blit instead of a copy command to copy uint textures to a buffer. "
+      "Workaround for OpenGLES.",
+      "https://issues.chromium.org/issues/556959073", ToggleStage::Device}},
+    {Toggle::UseBlitForSintTextureToBufferCopy,
+     {"use_blit_for_sint_texture_to_buffer_copy",
+      "Use a blit instead of a copy command to copy sint textures to a buffer. "
+      "Workaround for OpenGLES.",
+      "https://issues.chromium.org/issues/556959073", ToggleStage::Device}},
+    {Toggle::VulkanSplitBufferTextureCopyForArrayLayers,
+     {"vulkan_split_buffer_texture_copy_for_array_layers",
+      "Split a multi-layer buffer-to-texture / texture-to-buffer copy into one vkCmdCopy*Image "
+      "region per array layer / depth slice, each with an explicit per-layer buffer offset, "
+      "instead of a single region with layerCount > 1. Workaround for Huawei Maleoon GPUs, whose "
+      "drivers mis-stride the buffer between layers when bufferImageHeight is padded, corrupting "
+      "every layer after the first.",
+      "https://issues.chromium.org/issues/520126486", ToggleStage::Device}},
+    {Toggle::VulkanForceAlphaWriteForAlphaToCoverage,
+     {"vulkan_force_alpha_write_for_alpha_to_coverage",
+      "When alpha-to-coverage is enabled and the alpha channel of color attachment 0 is masked "
+      "off, force the alpha write bit on and set the alpha blend to (src * ZERO + dst * ONE) so "
+      "the value stored is the destination alpha. Workaround for Huawei Maleoon GPUs, whose "
+      "drivers drop the alpha-to-coverage computation when the fragment alpha is not written, "
+      "counting every sample as covered. The destination-preserving blend leaves the "
+      "attachment's alpha channel unchanged, so the workaround is not observable to the "
+      "application. Skipped for non-blendable formats.",
+      "https://issues.chromium.org/issues/525294804", ToggleStage::Device}},
+    {Toggle::GLUseArrayLengthFromImmediate,
+     {"gl_use_array_length_from_immediate",
+      "Use immediate data to replace arrayLength() function calls of dynamic storage buffers. "
       "This toggle is only used for workarounds on certain devices. It has no impact on backends "
       "which need "
       "this transform universally (metal, d3d12)",
@@ -527,7 +557,7 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
     {Toggle::VulkanClearGen12TextureWithCCSAmbiguateOnCreation,
      {"vulkan_clear_gen12_texture_with_ccs_ambiguate_on_creation",
       "Clears some R8-like textures to full 0 bits as soon as they are created. This Toggle is "
-      "enabled on Intel Gen12 GPUs due to a mesa driver issue.",
+      "enabled on Intel Gen12 GPUs due to a Mesa driver issue.",
       "https://crbug.com/chromium/1361662", ToggleStage::Device}},
     {Toggle::D3D12UseRootSignatureVersion1_1,
      {"d3d12_use_root_signature_version_1_1",
@@ -622,14 +652,15 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
     {Toggle::MetalPolyfillClampFloat,
      {"metal_polyfill_clamp_float", "Polyfill clamp function for floating point (metal).",
       "https://crbug.com/407109056", ToggleStage::Device}},
-    {Toggle::SubgroupShuffleClamped,
-     {"subgroup_shuffle_clamped",
-      "Polyfill subgroupShuffle by clamping the id param to within maximum possible subgroup size.",
-      "https://crbug.com/dawn/2502", ToggleStage::Device}},
     {Toggle::VulkanSampleCompareDepthCubeArrayWorkaround,
      {"vulkan_sample_compare_depth_cube_array_workaround",
-      "Polyfill specific case of TextureSampleCompare(Level) with workaround.",
+      "Polyfill specific case of textureSampleCompare(Level) with workaround.",
       "https://crbug.com/465179684", ToggleStage::Device}},
+    {Toggle::VulkanSampleCompare2DWorkaround,
+     {"vulkan_sample_compare_2d_workaround",
+      "Polyfill specific case of textureSampleCompare(Level) with bilinear interpolation of "
+      "textureGatherCompare.",
+      "https://crbug.com/469328925", ToggleStage::Device}},
     {Toggle::MetalDisableModuleConstantF16,
      {"metal_disable_module_constant_f16",
       "Disable module constant hoisting for values that contain f16 types.",
@@ -739,6 +770,26 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
      {"decompose_uniform_buffers",
       "Decompose uniform buffers into arrays of vec4<u32> on backends for Vulkan and OpenGL.",
       "https://crbug.com/448452698", ToggleStage::Adapter}},
+    {Toggle::D3D12DecomposeWorkgroupAccess,
+     {"d3d12_decompose_workgroup_access",
+      "Decompose workgroup memory variables into flat scalar arrays and rewrite accesses as "
+      "element-wise loads/stores with bitcasts on selected Intel GPUs on D3D12",
+      "https://crbug.com/341991439", ToggleStage::Device}},
+    {Toggle::D3D12PolyfillF16CeilFloor,
+     {"d3d12_polyfill_f16_ceil_floor",
+      "Polyfill f16 ceil and floor operations on selected Intel GPUs using DXC to avoid incorrect "
+      "results for values that underflow to zero.",
+      "", ToggleStage::Device}},
+    {Toggle::CollapseSubgroupMinMax,
+     {"collapse_subgroup_min_max",
+      "Collapse redundant subgroup min and max operations (e.g., subgroupMin(subgroupMin(x))) into "
+      "a single operation. This works around a driver crash on some AMD GPUs.",
+      "https://crbug.com/508265321", ToggleStage::Device}},
+    {Toggle::D3D12ForceEnableSubgroupMatrixOnBuggyIntelDrivers,
+     {"d3d12_force_enable_subgroup_matrix_on_buggy_intel_drivers",
+      "Force-enable subgroup matrix support on Intel D3D12 drivers through version 101.8992, "
+      "which may produce incorrect results.",
+      "https://crbug.com/558362033", ToggleStage::Adapter}},
     {Toggle::VulkanEnableF16OnNvidia,
      {"vulkan_enable_f16_on_nvidia", "Enables F16 on Nvidia GPUs with Vulkan",
       "https://crbug.com/42251215", ToggleStage::Adapter}},
@@ -772,16 +823,67 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
      {"vulkan_use_extended_dynamic_state",
       "Makes use of VK_EXT_extended_dynamic_state to improve pipeline caching.",
       "https://crbug.com/chromium/463893793", ToggleStage::Device}},
+    {Toggle::VulkanUseRasterizationOrderAttachmentAccess,
+     {"vulkan_use_rasterization_order_attachment_access",
+      "Use VK_EXT_rasterization_order_attachment_access when it is available.",
+      "https://crbug.com/42241389", ToggleStage::Device}},
     {Toggle::VulkanForceStaticSamplersForExternalTextures,
      {"vulkan_force_static_samplers_for_external_textures",
       "Enables the code path to take static samplers for external textures. While static YCbCr "
       "samplers are only require to sample YCbCr AHB on Android, this is useful for testing on "
       "other devices.",
       "https://crbug.com/468988322", ToggleStage::Device}},
+    {Toggle::D3D12UseHLSL2021,
+     {"d3d12_use_hlsl_2021", "Use HLSL 2021 when targeting DXC.", "https://crbug.com/508342536",
+      ToggleStage::Device}},
+    {Toggle::MetalFixU32DivMod,
+     {"metal_fix_u32_div_mod",
+      "Workaround a driver bug on Apple Silicon with u32 div and mod operations.",
+      "https://crbug.com/517225032", ToggleStage::Device}},
+    {Toggle::VulkanSleepAfterLostDeviceWait,
+     {"vulkan_sleep_after_lost_device_wait",
+      "Insert an arbitrary sleep after WaitIdle functions on device loss.",
+      "https://crbug.com/500417361", ToggleStage::Device}},
+    {Toggle::UseSpirvReconvergenceMode,
+     {"use_spirv_reconvergence_mode",
+      "Use SPIR-V reconvergence execution mode if supported by the device.",
+      "https://crbug.com/379673383", ToggleStage::Device}},
+    {Toggle::VulkanReplaceWorkgroupAtomicStoreWithExchange,
+     {"vulkan_replace_workgroup_atomic_store_with_exchange",
+      "Workaround for a driver bug that implements atomic store incorrectly.",
+      "https://crbug.com/487773864", ToggleStage::Device}},
+    {Toggle::VulkanDisallowNPOTDepthStencilMipmaps,
+     {"vulkan_disallow_npot_depth_stencil_mipmaps",
+      "Reject NPOT depth/stencil textures with mipLevelCount > 1. Workaround for mip level "
+      "miscomputation in PowerVR proprietary driver.",
+      "https://crbug.com/540087398", ToggleStage::Device}},
+    {Toggle::VulkanReplaceUnsignedCompareZero,
+     {"vulkan_rewrite_unsigned_compare_zero",
+      "Workaround for a driver bug where unsigned equality comparisons with zero trigger a buggy "
+      "peephole optimization on Samsung Xclipse GPUs.",
+      "https://crbug.com/543420711", ToggleStage::Device}},
+    {Toggle::VulkanUseCooperativeMatrixRobustBufferAccess,
+     {"vulkan_use_cooperative_matrix_robust_access",
+      "Disable clamping of subgroupMatrixLoad/Store on storage buffers if "
+      "cooperativeMatrixRobustBufferAccess == VK_TRUE",
+      "https://crbug.com/548005877", ToggleStage::Device}},
+    {Toggle::MetalEnableTensors,
+     {"metal_enable_tensors", "Enable the use of Metal 4 Tensor Operations for subgroup matrix.",
+      "https://crbug.com/550350271", ToggleStage::Adapter}},
+    {Toggle::AllowAlphaToCoverageNotBlendable,
+     {"allow_alpha_to_coverage_not_blendable",
+      "Killswitch for a fix to the validation where non-blendable formats where allowed for "
+      "alphaToCoverageEnabled",
+      "https://crbug.com/550350271", ToggleStage::Device}},
     {Toggle::WaitIsThreadSafe,
      {"wait_is_thread_safe",
       "WaitFor* functions are thread-safe and can be called without the device-lock if implicit "
       "synchronization is enabled.",
+      "https://crbug.com/412761228", ToggleStage::Device}},
+    {Toggle::SpontaneousQueueEvents,
+     {"spontaneous_queue_events",
+      "Queue events spontaneously complete, either via a dedicated Dawn owned thread, or backend "
+      "specific implementations.",
       "https://crbug.com/412761228", ToggleStage::Device}},
     {Toggle::NoWorkaroundSampleMaskBecomesZeroForAllButLastColorTarget,
      {"no_workaround_sample_mask_becomes_zero_for_all_but_last_color_target",
@@ -846,13 +948,6 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
       "Allows the GL backend to defer GL commands until Queue::Submit is called. This includes "
       "backend resource creations which will also be deferred.",
       "https://crbug.com/dawn/451928481", ToggleStage::Device}},
-    {Toggle::ShadowCopyMapWrite,
-     {"shadow_copy_map_write",
-      "By shadowing mapped buffers on the host, this allows the specific "
-      "code sequence of MapAsync(wgpu::MapMode::Write, ...) / WaitAny() "
-      "to be called on any thread, even in deferral mode. "
-      "This may incur a performance penalty due to the host-side copy.",
-      "https://crbug.com/dawn/451928481", ToggleStage::Device}},
     {Toggle::DisableTransientAttachment,
      {"disable_transient_attachment", "Disable TextureUsage TransientAttachment usage.",
       "https://crbug.com/dawn/462620664", ToggleStage::Device}},
@@ -861,6 +956,17 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
       "Backend will automatically map the buffer when it's not in use by GPU, to allow "
       "front-end's MapAsync and Unmap calls to become cheap without acquiring any lock internally.",
       "https://crbug.com/dawn/481158754", ToggleStage::Device}},
+    {Toggle::PolyfillBoolVecDynamicStore,
+     {"polyfill_bool_vec_dynamic_store",
+      "Workaround a driver bug on some Intel GPUs where dynamic component stores on "
+      "boolean vectors fail.",
+      "https://crbug.com/540789158", ToggleStage::Device}},
+    {Toggle::VulkanRelaxMaxInterStageShaderVariables,
+     {"vulkan_relax_max_inter_stage_shader_variables",
+      "Relax the maxInterStageShaderVariables floor for ImgTec (PowerVR) devices on Vulkan. "
+      "Some ImgTec drivers only report 64, which is below the WebGPU requirement. Enabling this "
+      "toggle accepts the limit of 64 instead of rejecting the adapter entirely.",
+      "https://g-issues.chromium.org/issues/559589664", ToggleStage::Instance}},
 
     // Comment to separate the }} so it is clearer what to copy-paste to add a toggle.
 }};
@@ -868,14 +974,14 @@ static constexpr ToggleEnumAndInfoList kToggleNameAndInfoList = {{
 }  // anonymous namespace
 
 void TogglesSet::Set(Toggle toggle, bool enabled) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
-    const uint32_t toggleIndex = uint32_t(toggle);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
+    const uint32_t toggleIndex = static_cast<uint32_t>(toggle);
     bitset.set(toggleIndex, enabled);
 }
 
 bool TogglesSet::Has(Toggle toggle) const {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
-    const uint32_t toggleIndex = uint32_t(toggle);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
+    const uint32_t toggleIndex = static_cast<uint32_t>(toggle);
     return bitset.test(toggleIndex);
 }
 
@@ -894,8 +1000,8 @@ TogglesState TogglesState::CreateFromTogglesDescriptor(const DawnTogglesDescript
     }
 
     TogglesInfo togglesInfo;
-    for (uint32_t i = 0; i < togglesDesc->enabledToggleCount; ++i) {
-        Toggle toggle = togglesInfo.ToggleNameToEnum(togglesDesc->enabledToggles[i]);
+    for (const char* toggleName : togglesDesc->enabledToggles) {
+        Toggle toggle = togglesInfo.ToggleNameToEnum(toggleName);
         if (toggle != Toggle::InvalidEnum) {
             const ToggleInfo* toggleInfo = togglesInfo.GetToggleInfo(toggle);
             // Accept the required toggles of current and earlier stage to allow override
@@ -906,8 +1012,8 @@ TogglesState TogglesState::CreateFromTogglesDescriptor(const DawnTogglesDescript
             }
         }
     }
-    for (uint32_t i = 0; i < togglesDesc->disabledToggleCount; ++i) {
-        Toggle toggle = togglesInfo.ToggleNameToEnum(togglesDesc->disabledToggles[i]);
+    for (const char* toggleName : togglesDesc->disabledToggles) {
+        Toggle toggle = togglesInfo.ToggleNameToEnum(toggleName);
         if (toggle != Toggle::InvalidEnum) {
             const ToggleInfo* toggleInfo = togglesInfo.GetToggleInfo(toggle);
             // Accept the required toggles of current and earlier stage to allow override
@@ -923,7 +1029,7 @@ TogglesState TogglesState::CreateFromTogglesDescriptor(const DawnTogglesDescript
 }
 
 TogglesState& TogglesState::InheritFrom(const TogglesState& inheritedToggles) {
-    DAWN_ASSERT(inheritedToggles.GetStage() < mStage);
+    DAWN_CHECK(inheritedToggles.GetStage() < mStage);
 
     // Do inheritance. All toggles that are force-set in the inherited toggles states would
     // be force-set in the result toggles state, and all toggles that are set in the inherited
@@ -931,7 +1037,7 @@ TogglesState& TogglesState::InheritFrom(const TogglesState& inheritedToggles) {
     // state.
     for (uint32_t i : inheritedToggles.mTogglesSet) {
         const Toggle& toggle = static_cast<Toggle>(i);
-        DAWN_ASSERT(TogglesInfo::GetToggleInfo(toggle)->stage < mStage);
+        DAWN_CHECK(TogglesInfo::GetToggleInfo(toggle)->stage < mStage);
         bool isEnabled = inheritedToggles.mEnabledToggles.Has(toggle);
         bool isForced = inheritedToggles.mForcedToggles.Has(toggle);
         // Only inherit a toggle if it is not set by user requirement or is forced in earlier stage.
@@ -948,8 +1054,8 @@ TogglesState& TogglesState::InheritFrom(const TogglesState& inheritedToggles) {
 
 // Set a toggle to given state, if the toggle has not been already set. Do nothing otherwise.
 void TogglesState::Default(Toggle toggle, bool enabled) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
-    DAWN_ASSERT(TogglesInfo::GetToggleInfo(toggle)->stage == mStage);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
+    DAWN_CHECK(TogglesInfo::GetToggleInfo(toggle)->stage == mStage);
     if (IsSet(toggle)) {
         return;
     }
@@ -958,10 +1064,10 @@ void TogglesState::Default(Toggle toggle, bool enabled) {
 }
 
 void TogglesState::ForceSet(Toggle toggle, bool enabled) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
-    DAWN_ASSERT(TogglesInfo::GetToggleInfo(toggle)->stage == mStage);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
+    DAWN_CHECK(TogglesInfo::GetToggleInfo(toggle)->stage == mStage);
     // Make sure that each toggle is force-set at most once.
-    DAWN_ASSERT(!mForcedToggles.Has(toggle));
+    DAWN_CHECK(!mForcedToggles.Has(toggle));
     if (mTogglesSet.Has(toggle) && mEnabledToggles.Has(toggle) != enabled) {
         dawn::WarningLog() << "Forcing toggle \"" << ToggleEnumToName(toggle) << "\" to " << enabled
                            << " when it was " << !enabled;
@@ -972,7 +1078,7 @@ void TogglesState::ForceSet(Toggle toggle, bool enabled) {
 }
 
 TogglesState& TogglesState::SetForTesting(Toggle toggle, bool enabled, bool forced) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
     mTogglesSet.Set(toggle, true);
     mEnabledToggles.Set(toggle, enabled);
     mForcedToggles.Set(toggle, forced);
@@ -982,14 +1088,14 @@ TogglesState& TogglesState::SetForTesting(Toggle toggle, bool enabled, bool forc
 
 bool TogglesState::IsSet(Toggle toggle) const {
     // Ensure that the toggle never used earlier than its stage.
-    DAWN_ASSERT(TogglesInfo::GetToggleInfo(toggle)->stage <= mStage);
+    DAWN_CHECK(TogglesInfo::GetToggleInfo(toggle)->stage <= mStage);
     return mTogglesSet.Has(toggle);
 }
 
 // Return true if the toggle is provided in enable list, and false otherwise.
 bool TogglesState::IsEnabled(Toggle toggle) const {
     // Ensure that the toggle never used earlier than its stage.
-    DAWN_ASSERT(TogglesInfo::GetToggleInfo(toggle)->stage <= mStage);
+    DAWN_CHECK(TogglesInfo::GetToggleInfo(toggle)->stage <= mStage);
     return mEnabledToggles.Has(toggle);
 }
 
@@ -1004,7 +1110,7 @@ std::vector<const char*> TogglesState::GetEnabledToggleNames() const {
     for (uint32_t i : mEnabledToggles) {
         const Toggle& toggle = static_cast<Toggle>(i);
         // All enabled toggles must be provided.
-        DAWN_ASSERT(mTogglesSet.Has(toggle));
+        DAWN_CHECK(mTogglesSet.Has(toggle));
         const char* toggleName = ToggleEnumToName(toggle);
         enabledTogglesName[index] = toggleName;
         ++index;
@@ -1040,11 +1146,11 @@ void StreamIn(stream::Sink* s, const TogglesState& togglesState) {
 }
 
 const char* ToggleEnumToName(Toggle toggle) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
 
     const ToggleEnumAndInfo& toggleNameAndInfo =
         kToggleNameAndInfoList[static_cast<size_t>(toggle)];
-    DAWN_ASSERT(toggleNameAndInfo.toggle == toggle);
+    DAWN_CHECK(toggleNameAndInfo.toggle == toggle);
     return toggleNameAndInfo.info.name;
 }
 
@@ -1064,7 +1170,7 @@ TogglesInfo::TogglesInfo() = default;
 TogglesInfo::~TogglesInfo() = default;
 
 const ToggleInfo* TogglesInfo::GetToggleInfo(const char* toggleName) {
-    DAWN_ASSERT(toggleName);
+    DAWN_CHECK(toggleName);
 
     EnsureToggleNameToEnumMapInitialized();
 
@@ -1076,13 +1182,13 @@ const ToggleInfo* TogglesInfo::GetToggleInfo(const char* toggleName) {
 }
 
 const ToggleInfo* TogglesInfo::GetToggleInfo(Toggle toggle) {
-    DAWN_ASSERT(toggle != Toggle::InvalidEnum);
+    DAWN_CHECK(toggle != Toggle::InvalidEnum);
 
     return &kToggleNameAndInfoList[static_cast<size_t>(toggle)].info;
 }
 
 Toggle TogglesInfo::ToggleNameToEnum(const char* toggleName) {
-    DAWN_ASSERT(toggleName);
+    DAWN_CHECK(toggleName);
 
     EnsureToggleNameToEnumMapInitialized();
 

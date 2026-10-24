@@ -31,7 +31,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -120,16 +120,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> RemoveContinueInSwitch(Module& ir) {
-    core::ir::AssertValid(ir,
-                          core::ir::Capabilities{
-                              core::ir::Capability::kAllow16BitIntegers,
-                              core::ir::Capability::kAllowVectorElementPointer,
-                              core::ir::Capability::kAllowHandleVarsWithoutBindings,
-                              core::ir::Capability::kAllowClipDistancesOnF32ScalarAndVector,
-                              core::ir::Capability::kAllowDuplicateBindings,
-                              core::ir::Capability::kAllowNonCoreTypes,
-                          },
-                          "before core.RemoveContinueInSwitch");
+    core::ir::AssertValid(ir, "before core.RemoveContinueInSwitch");
 
     State{ir}.Process();
 

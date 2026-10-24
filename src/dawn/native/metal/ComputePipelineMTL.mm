@@ -25,17 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/metal/ComputePipelineMTL.h"
+#include "src/dawn/native/metal/ComputePipelineMTL.h"
 
-#include "dawn/common/Math.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/CreatePipelineAsyncEvent.h"
-#include "dawn/native/Instance.h"
-#include "dawn/native/metal/BackendMTL.h"
-#include "dawn/native/metal/DeviceMTL.h"
-#include "dawn/native/metal/ShaderModuleMTL.h"
-#include "dawn/native/metal/UtilsMetal.h"
-#include "dawn/platform/metrics/HistogramMacros.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/CreatePipelineAsyncEvent.h"
+#include "src/dawn/native/Instance.h"
+#include "src/dawn/native/metal/BackendMTL.h"
+#include "src/dawn/native/metal/DeviceMTL.h"
+#include "src/dawn/native/metal/ImmediatesLayoutMTL.h"
+#include "src/dawn/native/metal/ShaderModuleMTL.h"
+#include "src/dawn/native/metal/UtilsMetal.h"
+#include "src/dawn/platform/metrics/HistogramMacros.h"
 
 namespace dawn::native::metal {
 
@@ -57,6 +58,9 @@ ResultOrError<Extent3D> ComputePipeline::InitializeImpl() {
 
     const ProgrammableStage& computeStage = GetStage(SingleShaderStage::Compute);
     ShaderModule::MetalFunctionData computeData;
+
+    mImmediateMask |= GetImmediateBlockBits(offsetof(ComputeImmediates, nonConstantZero),
+                                            sizeof(NonConstantZero));
 
     DAWN_TRY(ToBackend(computeStage.module.Get())
                  ->CreateFunction(SingleShaderStage::Compute, computeStage, ToBackend(GetLayout()),
@@ -86,12 +90,11 @@ ResultOrError<Extent3D> ComputePipeline::InitializeImpl() {
     DAWN_ASSERT(mMtlComputePipelineState != nil);
     timer.RecordMicroseconds("Metal.newComputePipelineStateWithDescriptor.CacheMiss");
 
-    mRequiresStorageBufferLength = computeData.needsStorageBufferLength;
     mWorkgroupAllocations = std::move(computeData.workgroupAllocations);
 
-    return {{uint32_t(computeData.localWorkgroupSize.width),
-             uint32_t(computeData.localWorkgroupSize.height),
-             uint32_t(computeData.localWorkgroupSize.depth)}};
+    return {{checked_cast<uint32_t>(computeData.localWorkgroupSize.width),
+             checked_cast<uint32_t>(computeData.localWorkgroupSize.height),
+             checked_cast<uint32_t>(computeData.localWorkgroupSize.depth)}};
 }
 
 void ComputePipeline::Encode(id<MTLComputeCommandEncoder> encoder) {
@@ -108,10 +111,6 @@ void ComputePipeline::Encode(id<MTLComputeCommandEncoder> encoder) {
 
 MTLSize ComputePipeline::GetLocalWorkGroupSize() const {
     return ToMTLSize(GetWorkgroupSize());
-}
-
-bool ComputePipeline::RequiresStorageBufferLength() const {
-    return mRequiresStorageBufferLength;
 }
 
 }  // namespace dawn::native::metal

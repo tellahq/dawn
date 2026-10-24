@@ -27,6 +27,9 @@
 
 import("../../../scripts/dawn_overrides_with_defaults.gni")
 
+# Import ANGLE after overrides to ensure dawn_angle_dir is defined.
+import("${dawn_angle_dir}/gni/angle.gni")
+
 import("//build_overrides/build.gni")
 import("${dawn_root}/generator/dawn_generator.gni")
 import("${dawn_root}/scripts/dawn_component.gni")
@@ -61,7 +64,8 @@ config("internal") {
   ]
 }
 
-# Config that adds the @executable_path rpath if needed so that Swiftshader or the Vulkan loader are found.
+# Config that adds the @executable_path rpath if needed so that Swiftshader or
+# the Vulkan loader are found.
 config("vulkan_rpath") {
   if (is_apple && dawn_enable_vulkan &&
       (use_swiftshader || enable_vulkan_loader)) {
@@ -86,6 +90,30 @@ config("vulkan_utility_libraries_include") {
 
 dawn_json_generator("utils_gen") {
   target = "native_utils"
+  inputs = [
+    "${dawn_root}/src/dawn/dawn_native.json",
+    "${dawn_template_dir}/dawn/api_structs.h.tmpl",
+    "${dawn_template_dir}/dawn/api_structs.cpp.tmpl",
+    "${dawn_template_dir}/dawn/cpp_macros.tmpl",
+    "${dawn_template_dir}/dawn/dawn_platform.h.tmpl",
+    "${dawn_template_dir}/dawn/native/api_absl_format.cpp",
+    "${dawn_template_dir}/dawn/native/api_absl_format.h",
+    "${dawn_template_dir}/dawn/native/api_StreamImpl.cpp",
+    "${dawn_template_dir}/dawn/native/api_structs.cpp",
+    "${dawn_template_dir}/dawn/native/api_structs.h",
+    "${dawn_template_dir}/dawn/native/api_structs_defaults.cpp",
+    "${dawn_template_dir}/dawn/native/api_structs_defaults.h",
+    "${dawn_template_dir}/dawn/native/ChainUtils.cpp",
+    "${dawn_template_dir}/dawn/native/ChainUtils.h",
+    "${dawn_template_dir}/dawn/native/dawn_platform.h",
+    "${dawn_template_dir}/dawn/native/Features.h",
+    "${dawn_template_dir}/dawn/native/Features.inl",
+    "${dawn_template_dir}/dawn/native/ObjectType.cpp",
+    "${dawn_template_dir}/dawn/native/ObjectType.h",
+    "${dawn_template_dir}/dawn/native/ProcTable.cpp",
+    "${dawn_template_dir}/dawn/native/ValidationUtils.cpp",
+    "${dawn_template_dir}/dawn/native/ValidationUtils.h",
+  ]
   outputs = [
     "src/dawn/native/ChainUtils_autogen.h",
     "src/dawn/native/ChainUtils_autogen.cpp",
@@ -95,6 +123,8 @@ dawn_json_generator("utils_gen") {
     "src/dawn/native/dawn_platform_autogen.h",
     "src/dawn/native/wgpu_structs_autogen.h",
     "src/dawn/native/wgpu_structs_autogen.cpp",
+    "src/dawn/native/wgpu_structs_defaults_autogen.h",
+    "src/dawn/native/wgpu_structs_defaults_autogen.cpp",
     "src/dawn/native/ValidationUtils_autogen.h",
     "src/dawn/native/ValidationUtils_autogen.cpp",
     "src/dawn/native/webgpu_absl_format_autogen.h",
@@ -113,6 +143,13 @@ if (dawn_enable_opengl) {
       rebase_path("${dawn_opengl_registry_dir}/xml/gl.xml", root_build_dir),
       "--supported-extensions",
       rebase_path("opengl/supported_extensions.json", root_build_dir),
+    ]
+    inputs = [
+      "${dawn_opengl_registry_dir}/xml/gl.xml",
+      "${dawn_template_dir}/opengl/opengl_platform.h",
+      "${dawn_template_dir}/opengl/OpenGLFunctionsBase.cpp",
+      "${dawn_template_dir}/opengl/OpenGLFunctionsBase.h",
+      "opengl/supported_extensions.json",
     ]
     outputs = [
       "src/dawn/native/opengl/OpenGLFunctionsBase_autogen.cpp",
@@ -182,9 +219,10 @@ source_set("sources") {
   # FooBackend.cpp need to be public deps so they are propagated to the
   # dawn native target
   public_deps = [
-    "${dawn_root}:abseil",
+    "${dawn_abseil_dir}:absl",
     "${dawn_root}/src/dawn/partition_alloc:raw_ptr",
     "${dawn_root}/src/dawn/platform",
+    "${dawn_root}/src/dawn/platform:dawn_perfetto",
   ]
 
   if (defined(_copy_fxc_dll_target)) {
@@ -296,10 +334,9 @@ source_set("sources") {
     "Format.cpp",
     "Format.h",
     "Forward.h",
-    "ImmediateConstantsLayout.cpp",
-    "ImmediateConstantsLayout.h",
-    "ImmediateConstantsTracker.cpp",
-    "ImmediateConstantsTracker.h",
+    "ImmediatesLayout.cpp",
+    "ImmediatesLayout.h",
+    "ImmediatesTracker.h",
     "IndirectDrawMetadata.cpp",
     "IndirectDrawMetadata.h",
     "IndirectDrawValidationEncoder.cpp",
@@ -317,6 +354,7 @@ source_set("sources") {
     "ObjectContentHasher.cpp",
     "ObjectContentHasher.h",
     "ObjectLabel.h",
+    "PassResourceUsage.cpp",
     "PassResourceUsage.h",
     "PassResourceUsageTracker.cpp",
     "PassResourceUsageTracker.h",
@@ -401,6 +439,7 @@ source_set("sources") {
     "ValidationUtils.cpp",
     "ValidationUtils.h",
     "VisitableMembers.h",
+    "WaitAnySystemEvent.cpp",
     "WaitAnySystemEvent.h",
     "WaitListEvent.cpp",
     "WaitListEvent.h",
@@ -412,10 +451,9 @@ source_set("sources") {
     "stream/ByteVectorSink.h",
     "stream/Sink.h",
     "stream/Source.h",
-    "stream/Stream.cpp",
     "stream/Stream.h",
-    "utils/WGPUHelpers.cpp",
-    "utils/WGPUHelpers.h",
+    "utils/NativeHelpers.cpp",
+    "utils/NativeHelpers.h",
     "webgpu_absl_format.cpp",
     "webgpu_absl_format.h",
   ]
@@ -519,10 +557,13 @@ source_set("sources") {
       "d3d11/DeviceInfoD3D11.cpp",
       "d3d11/DeviceInfoD3D11.h",
       "d3d11/Forward.h",
+      "d3d11/ImmediatesLayoutD3D11.h",
       "d3d11/PhysicalDeviceD3D11.cpp",
       "d3d11/PhysicalDeviceD3D11.h",
       "d3d11/PipelineLayoutD3D11.cpp",
       "d3d11/PipelineLayoutD3D11.h",
+      "d3d11/PipelineStateTrackerD3D11.cpp",
+      "d3d11/PipelineStateTrackerD3D11.h",
       "d3d11/PlatformFunctionsD3D11.cpp",
       "d3d11/PlatformFunctionsD3D11.h",
       "d3d11/QuerySetD3D11.cpp",
@@ -549,10 +590,12 @@ source_set("sources") {
   }
 
   if (dawn_enable_d3d12) {
+    if (dawn_use_agility_sdk) {
+      deps += [ "${dawn_agility_sdk_dir}:agility_sdk" ]
+    }
     if (dawn_use_built_dxc) {
-      deps += [ "$dawn_root/third_party/gn/dxc:dxcompiler" ]
+      deps += [ "${dawn_dxc_gn_dir}:dxcompiler" ]
       defines += [ "DAWN_USE_BUILT_DXC" ]
-      data_deps += [ "$dawn_root/third_party/gn/dxc:copy_dxil_dll" ]
     }
     libs += [ "dxguid.lib" ]
     sources += [
@@ -583,6 +626,7 @@ source_set("sources") {
       "d3d12/HeapAllocatorD3D12.h",
       "d3d12/HeapD3D12.cpp",
       "d3d12/HeapD3D12.h",
+      "d3d12/ImmediatesLayoutD3D12.h",
       "d3d12/IntegerTypes.h",
       "d3d12/PageableD3D12.cpp",
       "d3d12/PageableD3D12.h",
@@ -590,6 +634,8 @@ source_set("sources") {
       "d3d12/PhysicalDeviceD3D12.h",
       "d3d12/PipelineLayoutD3D12.cpp",
       "d3d12/PipelineLayoutD3D12.h",
+      "d3d12/PipelineLayoutHandle.cpp",
+      "d3d12/PipelineLayoutHandle.h",
       "d3d12/PlatformFunctionsD3D12.cpp",
       "d3d12/PlatformFunctionsD3D12.h",
       "d3d12/QuerySetD3D12.cpp",
@@ -668,6 +714,7 @@ source_set("sources") {
       "metal/DeviceMTL.h",
       "metal/DeviceMTL.mm",
       "metal/Forward.h",
+      "metal/ImmediatesLayoutMTL.h",
       "metal/MultiDrawEncoder.h",
       "metal/MultiDrawEncoder.mm",
       "metal/PhysicalDeviceMTL.h",
@@ -758,6 +805,8 @@ source_set("sources") {
       "webgpu/SharedFenceWGPU.h",
       "webgpu/SharedTextureMemoryWGPU.cpp",
       "webgpu/SharedTextureMemoryWGPU.h",
+      "webgpu/SwapChainWGPU.cpp",
+      "webgpu/SwapChainWGPU.h",
       "webgpu/TextureWGPU.cpp",
       "webgpu/TextureWGPU.h",
       "webgpu/ToWGPU.cpp",
@@ -767,8 +816,7 @@ source_set("sources") {
     deps += [ "${dawn_root}/src/dawn:serialization" ]
   }
 
-  if ((dawn_enable_opengl || dawn_enable_vulkan) &&
-      dawn_enable_spirv_validation) {
+  if (dawn_enable_spirv_validation) {
     sources += [
       "SpirvValidation.cpp",
       "SpirvValidation.h",
@@ -780,6 +828,7 @@ source_set("sources") {
   }
 
   if (dawn_enable_opengl) {
+    defines += [ "DAWN_ANGLE_LIBS_SUFFIX=\"${angle_libs_suffix}\"" ]
     public_deps += [
       ":opengl_loader_gen",
       "${dawn_root}/src/tint/api/common",
@@ -810,6 +859,7 @@ source_set("sources") {
       "opengl/Forward.h",
       "opengl/GLFormat.cpp",
       "opengl/GLFormat.h",
+      "opengl/ImmediatesLayoutGL.h",
       "opengl/IntegerTypes.h",
       "opengl/OpenGLFunctions.cpp",
       "opengl/OpenGLFunctions.h",
@@ -851,7 +901,7 @@ source_set("sources") {
       "opengl/UtilsGL.h",
       "opengl/opengl_platform.h",
     ]
-    include_dirs += [ "//third_party/EGL-Registry" ]
+    include_dirs += [ "${dawn_root}/third_party/EGL-Registry" ]
   }
 
   if (dawn_enable_vulkan) {
@@ -883,6 +933,9 @@ source_set("sources") {
       "vulkan/Forward.h",
       "vulkan/FramebufferCache.cpp",
       "vulkan/FramebufferCache.h",
+      "vulkan/FramebufferFetchHelper.cpp",
+      "vulkan/FramebufferFetchHelper.h",
+      "vulkan/ImmediatesLayoutVk.h",
       "vulkan/MemoryTypeSelector.cpp",
       "vulkan/MemoryTypeSelector.h",
       "vulkan/PhysicalDeviceVk.cpp",
@@ -952,6 +1005,7 @@ source_set("sources") {
         "vulkan/external_semaphore/SemaphoreServiceImplementationFD.h",
       ]
       if (is_android) {
+        libs += [ "android" ]
         sources += [
           "vulkan/external_memory/MemoryServiceImplementationAHardwareBuffer.cpp",
           "vulkan/external_memory/MemoryServiceImplementationAHardwareBuffer.h",
@@ -1059,6 +1113,7 @@ dawn_component("native") {
 
 dawn_json_generator("webgpu_dawn_native_proc_gen") {
   target = "webgpu_dawn_native_proc"
+  inputs = [ "${dawn_template_dir}/dawn/native/api_dawn_native_proc.cpp" ]
   outputs = [ "src/dawn/native/webgpu_dawn_native_proc.cpp" ]
 }
 

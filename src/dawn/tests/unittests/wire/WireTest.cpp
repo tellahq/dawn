@@ -25,20 +25,17 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/unittests/wire/WireTest.h"
+#include "src/dawn/tests/unittests/wire/WireTest.h"
 
-#include "dawn/common/StringViewUtils.h"
 #include "dawn/dawn_proc.h"
-#include "dawn/tests/MockCallback.h"
-#include "dawn/utils/TerribleCommandBuffer.h"
 #include "dawn/wire/WireClient.h"
 #include "dawn/wire/WireServer.h"
+#include "src/dawn/common/StringViewUtils.h"
+#include "src/dawn/tests/MockCallback.h"
+#include "src/dawn/utils/TerribleCommandBuffer.h"
 
 using testing::_;
-using testing::AnyNumber;
-using testing::AtLeast;
 using testing::AtMost;
-using testing::Exactly;
 using testing::Mock;
 using testing::MockCallback;
 using testing::NotNull;
@@ -46,6 +43,7 @@ using testing::Return;
 using testing::SaveArg;
 using testing::StrEq;
 using testing::WithArg;
+using testing::WithArgs;
 
 namespace dawn {
 
@@ -60,9 +58,7 @@ uint32_t sWireProcTableRefCount = 0;
 WireTest::WireTest() {
     // Set up default expectation for Device.Destroy to ensure we can track that every device on the
     // server has Destroy called.
-    ON_CALL(api, DeviceDestroy).WillByDefault([this](WGPUDevice device) {
-        mDeviceDestroyed[device] = true;
-    });
+    ON_CALL(api, DeviceDestroy).WillByDefault([this](WGPUDevice d) { mDeviceDestroyed[d] = true; });
 }
 
 WireTest::~WireTest() {
@@ -78,6 +74,10 @@ wire::client::MemoryTransferService* WireTest::GetClientMemoryTransferService() 
 
 wire::server::MemoryTransferService* WireTest::GetServerMemoryTransferService() {
     return nullptr;
+}
+
+utils::TerribleCommandBuffer* WireTest::GetC2SCommandBuffer() {
+    return mC2sBuf.get();
 }
 
 void WireTest::SetUp() {
@@ -120,31 +120,32 @@ void WireTest::SetUp() {
     instance.RequestAdapter(nullptr, wgpu::CallbackMode::AllowSpontaneous, adapterCb.Callback(),
                             adapterCb.MakeUserdata(this));
 
-    EXPECT_CALL(api, OnInstanceRequestAdapter(apiInstance, _, _)).WillOnce([&]() {
-        EXPECT_CALL(api, AdapterHasFeature(apiAdapter, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(api, OnInstanceRequestAdapter(apiInstance, _, _, _))
+        .WillOnce(WithArg<3>([&](WGPUFuture future) {
+            EXPECT_CALL(api, AdapterHasFeature(apiAdapter, _)).WillRepeatedly(Return(false));
 
-        EXPECT_CALL(api, AdapterGetInfo(apiAdapter, NotNull()))
-            .WillOnce(WithArg<1>([&](WGPUAdapterInfo* info) {
-                *info = {};
-                info->vendor = kEmptyOutputStringView;
-                info->architecture = kEmptyOutputStringView;
-                info->device = kEmptyOutputStringView;
-                info->description = kEmptyOutputStringView;
-                return WGPUStatus_Success;
-            }));
+            EXPECT_CALL(api, AdapterGetInfo(apiAdapter, NotNull()))
+                .WillOnce(WithArg<1>([&](WGPUAdapterInfo* info) {
+                    *info = {};
+                    info->vendor = kEmptyOutputStringView;
+                    info->architecture = kEmptyOutputStringView;
+                    info->device = kEmptyOutputStringView;
+                    info->description = kEmptyOutputStringView;
+                    return WGPUStatus_Success;
+                }));
 
-        EXPECT_CALL(api, AdapterGetLimits(apiAdapter, NotNull()))
-            .WillOnce(WithArg<1>([&](WGPULimits* limits) {
-                *limits = {};
-                return WGPUStatus_Success;
-            }));
+            EXPECT_CALL(api, AdapterGetLimits(apiAdapter, NotNull()))
+                .WillOnce(WithArg<1>([&](WGPULimits* limits) {
+                    *limits = {};
+                    return WGPUStatus_Success;
+                }));
 
-        EXPECT_CALL(api, AdapterGetFeatures(apiAdapter, NotNull()))
-            .WillOnce(WithArg<1>([&](WGPUSupportedFeatures* features) { *features = {}; }));
+            EXPECT_CALL(api, AdapterGetFeatures(apiAdapter, NotNull()))
+                .WillOnce(WithArg<1>([&](WGPUSupportedFeatures* features) { *features = {}; }));
 
-        api.CallInstanceRequestAdapterCallback(apiInstance, WGPURequestAdapterStatus_Success,
-                                               apiAdapter, kEmptyOutputStringView);
-    });
+            api.CallInstanceRequestAdapterCallback(apiInstance, WGPURequestAdapterStatus_Success,
+                                                   apiAdapter, kEmptyOutputStringView, future);
+        }));
     FlushClient();
     EXPECT_CALL(adapterCb, Call(wgpu::RequestAdapterStatus::Success, NotNull(), StrEq(""), this))
         .WillOnce(SaveArg<1>(&adapter));
@@ -164,8 +165,8 @@ void WireTest::SetUp() {
         deviceCb;
     adapter.RequestDevice(&deviceDesc, wgpu::CallbackMode::AllowSpontaneous, deviceCb.Callback(),
                           deviceCb.MakeUserdata(this));
-    EXPECT_CALL(api, OnAdapterRequestDevice(apiAdapter, NotNull(), _))
-        .WillOnce(WithArg<1>([&](const WGPUDeviceDescriptor* desc) {
+    EXPECT_CALL(api, OnAdapterRequestDevice(apiAdapter, NotNull(), _, _))
+        .WillOnce(WithArgs<1, 3>([&](const WGPUDeviceDescriptor* desc, WGPUFuture future) {
             // Set on device creation to forward callbacks to the client.
             EXPECT_CALL(api, OnDeviceSetLoggingCallback(apiDevice, _)).Times(1);
 
@@ -190,7 +191,7 @@ void WireTest::SetUp() {
                 .WillOnce(WithArg<1>([&](WGPUSupportedFeatures* features) { *features = {}; }));
 
             api.CallAdapterRequestDeviceCallback(apiAdapter, WGPURequestDeviceStatus_Success,
-                                                 apiDevice, kEmptyOutputStringView);
+                                                 apiDevice, kEmptyOutputStringView, future);
         }));
     FlushClient();
     EXPECT_CALL(deviceCb, Call(wgpu::RequestDeviceStatus::Success, NotNull(), StrEq(""), this))
@@ -223,9 +224,9 @@ void WireTest::TearDown() {
 }
 
 WGPUDevice WireTest::GetNewDevice() {
-    auto device = api.GetNewDevice();
-    mDeviceDestroyed[device] = false;
-    return device;
+    auto d = api.GetNewDevice();
+    mDeviceDestroyed[d] = false;
+    return d;
 }
 
 void WireTest::FlushClient(bool success) {

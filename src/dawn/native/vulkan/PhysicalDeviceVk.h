@@ -31,10 +31,11 @@
 #include <memory>
 #include <vector>
 
-#include "dawn/common/Ref.h"
-#include "dawn/common/vulkan_platform.h"
-#include "dawn/native/PhysicalDevice.h"
-#include "dawn/native/vulkan/VulkanInfo.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/Ref.h"
+#include "src/dawn/common/vulkan_platform.h"
+#include "src/dawn/native/PhysicalDevice.h"
+#include "src/dawn/native/vulkan/VulkanInfo.h"
 
 namespace dawn::native {
 class AHBFunctions;
@@ -46,7 +47,9 @@ class VulkanInstance;
 
 class PhysicalDevice : public PhysicalDeviceBase {
   public:
-    PhysicalDevice(VulkanInstance* vulkanInstance, VkPhysicalDevice physicalDevice);
+    PhysicalDevice(InstanceBase* instance,
+                   VulkanInstance* vulkanInstance,
+                   VkPhysicalDevice physicalDevice);
     ~PhysicalDevice() override;
 
     // PhysicalDeviceBase Implementation
@@ -61,15 +64,25 @@ class PhysicalDevice : public PhysicalDeviceBase {
     bool IsDepthStencilFormatSupported(VkFormat format) const;
     bool IsTextureCompressionASTCSliced3DSupported(VkFormat format) const;
 
+    static bool IsAndroid();
     bool IsAndroidQualcomm() const;
     bool IsAndroidARM() const;
     bool IsAndroidSamsung() const;
     bool IsAndroidImgTec() const;
+    bool IsAndroidHuawei() const;
     bool IsPixel10() const;
+    bool IsSwiftshader() const;
+    static bool IsWindows();
+    bool IsWindowsAMD() const;
+
+    // Check using VkDriverId, which is available in Vk 1.2 or an extension.
     bool IsIntelMesa() const;
     bool IsAmdMesa() const;
-    bool IsAndroidHuawei() const;
-    bool IsSwiftshader() const;
+
+    // Assumes that we might be on the proprietary driver if VkDriverId is not available.
+    bool MayBeArmProprietary() const;
+    bool MayBeQualcommProprietary() const;
+    bool MayBeImaginationProprietary() const;
 
     std::optional<uint32_t> GetDefaultComputeSubgroupSize() const;
     std::vector<SubgroupMatrixConfig> EnumerateSubgroupMatrixConfigs(
@@ -114,15 +127,16 @@ class PhysicalDevice : public PhysicalDeviceBase {
 
     // Sets core feature level as not being supported and stores `error` with
     // reason why core isn't supported.
-    void SetCoreNotSupported(std::unique_ptr<ErrorData> error);
+    void SetCoreNotSupported(std::unique_ptr<InternalError> error);
 
     VkPhysicalDevice mVkPhysicalDevice;
+    raw_ptr<InstanceBase> mInstance;
     Ref<VulkanInstance> mVulkanInstance;
     VulkanDeviceInfo mDeviceInfo = {};
 
     std::optional<uint32_t> mDefaultComputeSubgroupSize;
     bool mSupportsCoreFeatureLevel = true;
-    mutable std::unique_ptr<ErrorData> mCoreError;
+    mutable std::unique_ptr<InternalError> mCoreError;
 
 #if DAWN_PLATFORM_IS(ANDROID)
     std::unique_ptr<AHBFunctions> mAHBFunctions;

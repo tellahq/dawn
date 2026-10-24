@@ -30,11 +30,11 @@
 
 #include <unordered_set>
 
-#include "dawn/native/ChainUtils.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Features.h"
-#include "dawn/native/Serializable.h"
-#include "dawn/native/dawn_platform.h"
+#include "src/dawn/native/ChainUtils.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Features.h"
+#include "src/dawn/native/Serializable.h"
+#include "src/dawn/native/dawn_platform.h"
 
 namespace dawn::native {
 namespace detail {
@@ -55,7 +55,7 @@ struct CheckLimit<LimitClass::Alignment> {
     }
 
     template <typename T>
-    static MaybeError Validate(T supported, T required) {
+    static MaybeValError Validate(T supported, T required) {
         DAWN_INVALID_IF(IsBetter(required, supported),
                         "Required limit (%u) is lower than the supported limit (%u).", required,
                         supported);
@@ -73,7 +73,7 @@ struct CheckLimit<LimitClass::Maximum> {
     }
 
     template <typename T>
-    static MaybeError Validate(T supported, T required) {
+    static MaybeValError Validate(T supported, T required) {
         DAWN_INVALID_IF(IsBetter(required, supported),
                         "Required limit (%u) is greater than the supported limit (%u).", required,
                         supported);
@@ -119,13 +119,14 @@ CombinedLimits ReifyDefaultLimits(const CombinedLimits& limits, wgpu::FeatureLev
 void EnforceLimitSpecInvariants(CombinedLimits* limits, wgpu::FeatureLevel featureLevel);
 
 // Validate that |requiredLimits| are no better than |supportedLimits|.
-MaybeError ValidateLimits(const CombinedLimits& supportedLimits,
-                          const CombinedLimits& requiredLimits);
+MaybeValError ValidateLimits(const CombinedLimits& supportedLimits,
+                             const CombinedLimits& requiredLimits);
 
 // Validtate that the |chainedLimits| are valid and unpack them into |out|.
-MaybeError ValidateAndUnpackLimitsIn(const Limits* chainedLimits,
-                                     const std::unordered_set<wgpu::FeatureName>& supportedFeatures,
-                                     CombinedLimits* out);
+MaybeValError ValidateAndUnpackLimitsIn(
+    const Limits* chainedLimits,
+    const std::unordered_set<wgpu::FeatureName>& supportedFeatures,
+    CombinedLimits* out);
 
 // Unpack |chainedLimits| into |out|.
 void UnpackLimitsIn(const Limits* chainedLimits, CombinedLimits* out);

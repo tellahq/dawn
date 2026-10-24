@@ -25,6 +25,12 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -37,13 +43,13 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/TextureUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/TestUtils.h"
+#include "src/dawn/utils/TextureUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -616,15 +622,13 @@ TEST_P(MultithreadTests, T2BThenDestroyTexture) {
 
 // Test that copy a texture to a buffer then map that buffer in parallel works.
 TEST_P(MultithreadTests, T2BThenMapInParallel) {
-    // TODO(crbug.com/459848483): Flaky on Win/Snapdragon X Elite.
-    DAWN_SUPPRESS_TEST_IF(IsWindows() && IsQualcomm());
-
     constexpr uint32_t kTextureSize = 512;
     constexpr wgpu::TextureFormat kTextureFormat = wgpu::TextureFormat::RGBA8Unorm;
     constexpr uint32_t kBytesPerPixel = 4;
-    constexpr uint64_t kBufferSize = kTextureSize * kTextureSize * kBytesPerPixel;
+    constexpr uint64_t kBufferSize =
+        static_cast<uint64_t>(kTextureSize) * kTextureSize * kBytesPerPixel;
 
-    std::vector<utils::RGBA8> textureData(kTextureSize * kTextureSize);
+    std::vector<utils::RGBA8> textureData(static_cast<size_t>(kTextureSize) * kTextureSize);
     for (uint32_t y = 0; y < kTextureSize; ++y) {
         for (uint32_t x = 0; x < kTextureSize; ++x) {
             textureData[y * kTextureSize + x] =
@@ -1093,7 +1097,7 @@ TEST_P(MultithreadTests, DestroyTextureAndViewsAtSameTime) {
         texDescriptor.sampleCount = 1;
 
         wgpu::Texture texture = device.CreateTexture(&texDescriptor);
-        wgpu::TextureView textureViews[kNumViews];
+        std::array<wgpu::TextureView, kNumViews> textureViews;
 
         for (uint32_t i = 0; i < kNumViews; ++i) {
             wgpu::TextureViewDescriptor viewDescriptor = {};
@@ -1360,6 +1364,9 @@ TEST_P(MultithreadEncodingTests, RenderPassEncodersInParallel) {
     // TODO(crbug.com/468047550): Fails on Win11/NVIDIA GTX 1660.
     DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsNvidia() && IsD3D12() && IsBackendValidationEnabled());
 
+    // TODO(crbug.com/468047550): Fails on Win11/AMD RX 5500 XT.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
+
     // TODO(crbug.com/473899151): [Capture] multisampled.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
@@ -1407,6 +1414,9 @@ TEST_P(MultithreadEncodingTests, RenderPassEncodersInParallel) {
 TEST_P(MultithreadEncodingTests, RenderPassEncoders_ResolveToMipLevelOne_InParallel) {
     // TODO(crbug.com/468047550): Fails on Win11/NVIDIA GTX 1660.
     DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsNvidia() && IsD3D12() && IsBackendValidationEnabled());
+
+    // TODO(crbug.com/468047550): Fails on Win11/AMD RX 5500 XT.
+    DAWN_SUPPRESS_TEST_IF(IsWindows11() && IsAMD() && IsD3D12() && IsBackendValidationEnabled());
 
     // TODO(crbug.com/473899151): [Capture] multisampled.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
@@ -1506,7 +1516,12 @@ TEST_P(MultithreadEncodingTests, ComputePassEncodersInParallel) {
 
 class MultithreadTextureCopyTests : public MultithreadTests {
   protected:
-    void SetUp() override { MultithreadTests::SetUp(); }
+    void SetUp() override {
+        MultithreadTests::SetUp();
+
+        // TODO(crbug.com/522872466): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+    }
 
     wgpu::Texture CreateAndWriteTexture(uint32_t width,
                                         uint32_t height,
@@ -1596,7 +1611,8 @@ TEST_P(MultithreadTextureCopyTests, CopyDepthToDepthNoRace) {
 
     std::vector<uint16_t> kExpectedData16(kExpectedData32.size());
     for (size_t i = 0; i < kExpectedData32.size(); ++i) {
-        kExpectedData16[i] = kExpectedData32[i] * std::numeric_limits<uint16_t>::max();
+        kExpectedData16[i] =
+            static_cast<uint16_t>(kExpectedData32[i] * std::numeric_limits<uint16_t>::max());
     }
 
     const size_t kExpectedDataSize16 = kExpectedData16.size() * sizeof(kExpectedData16[0]);
@@ -1627,7 +1643,7 @@ TEST_P(MultithreadTextureCopyTests, CopyDepthToDepthNoRace) {
         // Copy from depthTexture to destTexture.
         const wgpu::Extent3D dstSize = {kWidth, kHeight, 1};
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/1, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/1, {0, 0, 0}, wgpu::TextureAspect::All);
         auto encoder = device.CreateCommandEncoder();
         lockStep.Wait(Step::WriteTexture);
         CopyTextureToTextureHelper(depthTexture, dest, dstSize, encoder);
@@ -1664,7 +1680,8 @@ TEST_P(MultithreadTextureCopyTests, CopyBufferToDepthNoRace) {
 
     std::vector<uint16_t> kExpectedData16(kExpectedData32.size());
     for (size_t i = 0; i < kExpectedData32.size(); ++i) {
-        kExpectedData16[i] = kExpectedData32[i] * std::numeric_limits<uint16_t>::max();
+        kExpectedData16[i] =
+            static_cast<uint16_t>(kExpectedData32[i] * std::numeric_limits<uint16_t>::max());
     }
 
     const uint32_t kExpectedDataSize16 = kExpectedData16.size() * sizeof(kExpectedData16[0]);
@@ -1695,7 +1712,7 @@ TEST_P(MultithreadTextureCopyTests, CopyBufferToDepthNoRace) {
         auto encoder = device.CreateCommandEncoder();
 
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
 
         // Wait until src buffer is written.
         lockStep.Wait(Step::WriteBuffer);
@@ -1763,7 +1780,7 @@ TEST_P(MultithreadTextureCopyTests, CopyStencilToStencilNoRace) {
         // Copy from stencilTexture to destTexture.
         const wgpu::Extent3D dstSize = {kWidth, kHeight, 1};
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/1, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/1, {0, 0, 0}, wgpu::TextureAspect::All);
         auto encoder = device.CreateCommandEncoder();
         lockStep.Wait(Step::WriteTexture);
 
@@ -1822,7 +1839,7 @@ TEST_P(MultithreadTextureCopyTests, CopyBufferToStencilNoRace) {
         auto encoder = device.CreateCommandEncoder();
 
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
 
         // Wait until src buffer is written.
         lockStep.Wait(Step::WriteBuffer);
@@ -1843,6 +1860,10 @@ TEST_P(MultithreadTextureCopyTests, CopyBufferToStencilNoRace) {
 // we need to make sure that it won't race with other threads' works.
 TEST_P(MultithreadTextureCopyTests, CopyTextureForBrowserNoRace) {
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
+
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
 
     enum class Step {
         Begin,
@@ -1892,7 +1913,7 @@ TEST_P(MultithreadTextureCopyTests, CopyTextureForBrowserNoRace) {
         // Copy from srcTexture to destTexture.
         const wgpu::Extent3D dstSize = {kWidth, kHeight, 1};
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
         wgpu::CopyTextureForBrowserOptions options;
         options.flipY = true;
 
@@ -1910,6 +1931,10 @@ TEST_P(MultithreadTextureCopyTests, CopyTextureForBrowserNoRace) {
 // Test that error from CopyTextureForBrowser() won't cause deadlock.
 TEST_P(MultithreadTextureCopyTests, CopyTextureForBrowserErrorNoDeadLock) {
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
+
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
 
     DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
 
@@ -1957,7 +1982,7 @@ TEST_P(MultithreadTextureCopyTests, CopyTextureForBrowserErrorNoDeadLock) {
         // Copy from srcTexture to destTexture.
         const wgpu::Extent3D dstSize = {kWidth, kHeight, 1};
         wgpu::TexelCopyTextureInfo dest = utils::CreateTexelCopyTextureInfo(
-            destTexture, /*dstMipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
+            destTexture, /*mipLevel=*/0, {0, 0, 0}, wgpu::TextureAspect::All);
         wgpu::CopyTextureForBrowserOptions options = {};
 
         device.PushErrorScope(wgpu::ErrorFilter::Validation);
@@ -2162,10 +2187,11 @@ class MultithreadTimestampQueryTests : public MultithreadTests {
 // Test resolving timestamp queries on multiple threads. ResolveQuerySet() will create temp
 // resources internally so we need to make sure they are thread safe.
 TEST_P(MultithreadTimestampQueryTests, ResolveQuerySets_InParallel) {
-    DAWN_SUPPRESS_TEST_IF(IsWARP());  // Flaky on WARP
-
     // TODO(crbug.com/451389800): [Capture] implement query set.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
+
+    // TODO (530541262): Investigate failure on macOS 26 M2.
+    DAWN_SUPPRESS_TEST_IF(IsMetal() && IsApple());
 
     constexpr uint32_t kQueryCount = 2;
     constexpr uint32_t kNumThreads = 10;

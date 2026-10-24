@@ -169,7 +169,7 @@ GPUSupportedFeatures.prototype.values = function(...args) {};
 GPUSupportedFeatures.prototype.forEach = function(...args) {};
 /** @return {boolean} */
 GPUSupportedFeatures.prototype.has = function(...args) {};
-/** @return {!Iterator<string>} */
+/** @return {!IteratorLike<string>} */
 GPUSupportedFeatures.prototype[Symbol.iterator] = function() {};
 
 /**
@@ -189,7 +189,7 @@ WGSLLanguageFeatures.prototype.values = function(...args) {};
 WGSLLanguageFeatures.prototype.forEach = function(...args) {};
 /** @return {boolean} */
 WGSLLanguageFeatures.prototype.has = function(...args) {};
-/** @return {!Iterator<string>} */
+/** @return {!IteratorLike<string>} */
 WGSLLanguageFeatures.prototype[Symbol.iterator] = function() {};
 
 /** @constructor */
@@ -206,6 +206,21 @@ GPUAdapterInfo.prototype.description;
 GPUAdapterInfo.prototype.subgroupMinSize;
 /** @type {number} */
 GPUAdapterInfo.prototype.subgroupMaxSize;
+/** @type {Iterator<GPUSubgroupMatrixConfig>} */
+GPUAdapterInfo.prototype.subgroupMatrixConfigs;
+
+/** @constructor */
+function GPUSubgroupMatrixConfig() {}
+/** @type {string} */
+GPUSubgroupMatrixConfig.prototype.componentType;
+/** @type {string} */
+GPUSubgroupMatrixConfig.prototype.resultComponentType;
+/** @type {number} */
+GPUSubgroupMatrixConfig.prototype.M;
+/** @type {number} */
+GPUSubgroupMatrixConfig.prototype.N;
+/** @type {number} */
+GPUSubgroupMatrixConfig.prototype.K;
 
 /** @constructor */
 function GPU() {}

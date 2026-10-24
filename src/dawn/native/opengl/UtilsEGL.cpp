@@ -25,29 +25,18 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/opengl/UtilsEGL.h"
+#include "src/dawn/native/opengl/UtilsEGL.h"
 
 #include <string>
 #include <vector>
 
-#include "dawn/native/opengl/DeviceGL.h"
-#include "dawn/native/opengl/EGLFunctions.h"
-#include "dawn/native/opengl/PhysicalDeviceGL.h"
+#include "src/dawn/native/opengl/DeviceGL.h"
+#include "src/dawn/native/opengl/EGLFunctions.h"
+#include "src/dawn/native/opengl/PhysicalDeviceGL.h"
+#include "src/utils/compiler.h"
+#include "src/utils/span.h"
 
 namespace dawn::native::opengl {
-
-namespace {
-std::vector<EGLAttrib> ConvertEGLIntParameterListToEGLAttrib(const EGLint* intAttribs) {
-    std::vector<EGLAttrib> attribs;
-    if (intAttribs) {
-        for (const EGLint* curAttrib = intAttribs; *curAttrib != EGL_NONE; curAttrib++) {
-            attribs.push_back(static_cast<EGLAttrib>(*curAttrib));
-        }
-    }
-    attribs.push_back(EGL_NONE);
-    return attribs;
-}
-}  // namespace
 
 const char* EGLErrorAsString(EGLint error) {
     switch (error) {
@@ -95,7 +84,7 @@ MaybeError CheckEGL(const EGLFunctions& egl, EGLBoolean result, const char* cont
     if (error == EGL_BAD_ALLOC) {
         return DAWN_OUT_OF_MEMORY_ERROR(message);
     } else if (error == EGL_CONTEXT_LOST) {
-        return DAWN_DEVICE_LOST_ERROR(message);
+        return DAWN_BACKEND_DEVICE_LOST_ERROR(message);
     } else {
         return DAWN_INTERNAL_ERROR(message);
     }
@@ -104,7 +93,7 @@ MaybeError CheckEGL(const EGLFunctions& egl, EGLBoolean result, const char* cont
 ResultOrError<Ref<WrappedEGLSync>> WrappedEGLSync::Create(DisplayEGL* display,
                                                           const OpenGLFunctions&,
                                                           EGLenum type,
-                                                          const EGLint* attribs) {
+                                                          Span<const EGLint> attribs) {
     const EGLFunctions& egl = display->egl.get();
 
     EGLSyncKHR sync = EGL_NO_SYNC;
@@ -112,10 +101,15 @@ ResultOrError<Ref<WrappedEGLSync>> WrappedEGLSync::Create(DisplayEGL* display,
     // so a OpenGLFunctions parameter restricts the caller to call this inside Device's
     // EnqueueGL/ExecuteGL.
     if (egl.HasExt(EGLExt::FenceSync)) {
-        sync = egl.CreateSyncKHR(display->GetDisplay(), type, attribs);
+        DAWN_CHECK(attribs.data() == nullptr || attribs.back() == EGL_NONE);
+        sync = egl.CreateSyncKHR(display->GetDisplay(), type, attribs.data());
     } else {
         DAWN_ASSERT(egl.IsAtLeastVersion(1, 5));
-        std::vector<EGLAttrib> convertedAttribs = ConvertEGLIntParameterListToEGLAttrib(attribs);
+        std::vector<EGLAttrib> convertedAttribs;
+        for (EGLint attrib : attribs) {
+            convertedAttribs.push_back(static_cast<EGLAttrib>(attrib));
+        }
+        convertedAttribs.push_back(EGL_NONE);
         sync = egl.CreateSync(display->GetDisplay(), type, convertedAttribs.data());
     }
 
@@ -182,10 +176,10 @@ ResultOrError<EGLenum> WrappedEGLSync::ClientWait(const OpenGLFunctions&,
 
     EGLenum result = EGL_FALSE;
     if (egl.HasExt(EGLExt::FenceSync)) {
-        result = egl.ClientWaitSyncKHR(mDisplay->GetDisplay(), mSync, flags, uint64_t(timeout));
+        result = egl.ClientWaitSyncKHR(mDisplay->GetDisplay(), mSync, flags, uint64_t{timeout});
     } else {
         DAWN_ASSERT(egl.IsAtLeastVersion(1, 5));
-        result = egl.ClientWaitSync(mDisplay->GetDisplay(), mSync, flags, uint64_t(timeout));
+        result = egl.ClientWaitSync(mDisplay->GetDisplay(), mSync, flags, uint64_t{timeout});
     }
 
     DAWN_TRY(CheckEGL(egl, result != EGL_FALSE, "eglClientWaitSync"));

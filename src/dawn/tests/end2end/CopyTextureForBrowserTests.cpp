@@ -28,13 +28,13 @@
 #include <string>
 #include <vector>
 
-#include "dawn/common/Constants.h"
-#include "dawn/common/Math.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/TextureUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Constants.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/TestUtils.h"
+#include "src/dawn/utils/TextureUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 // TODO(dawn:2205) Remove these stream operators if we move them to a standard location.
 namespace wgpu {
@@ -594,6 +594,10 @@ class CopyTextureForBrowser_Basic : public CopyTextureForBrowserTests<DawnTest> 
   protected:
     void DoBasicCopyTest(const wgpu::Extent3D& copySize,
                          const wgpu::CopyTextureForBrowserOptions options = {}) {
+        // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+        // Implement_DXIL_ShuffleVector.
+        DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
+
         TextureSpec textureSpec;
         textureSpec.textureSize = copySize;
 
@@ -1191,6 +1195,10 @@ TEST_P(CopyTextureForBrowser_Formats, ColorConversion) {
     // dst texture format
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux() && IsDstFormatSrgbFormats());
 
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
+
     DoColorConversionTest();
 }
 
@@ -1226,8 +1234,9 @@ TEST_P(CopyTextureForBrowser_SubRects, CopySubRect) {
     // Tests skip due to crbug.com/dawn/592.
     DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsBackendValidationEnabled());
 
-    // Tests skip due to crbug.com/dawn/1104.
-    DAWN_SUPPRESS_TEST_IF(IsWARP());
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
 
     DoCopySubRectTest();
 }
@@ -1247,8 +1256,9 @@ TEST_P(CopyTextureForBrowser_AlphaMode, alphaMode) {
     DAWN_SUPPRESS_TEST_IF(IsImgTec());
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
 
-    // Tests skip due to crbug.com/dawn/1104.
-    DAWN_SUPPRESS_TEST_IF(IsWARP());
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
 
     DoAlphaModeTest();
 }
@@ -1268,8 +1278,9 @@ TEST_P(CopyTextureForBrowser_ColorSpace, colorSpaceConversion) {
     DAWN_SUPPRESS_TEST_IF(IsImgTec());
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
 
-    // Tests skip due to crbug.com/dawn/1104.
-    DAWN_SUPPRESS_TEST_IF(IsWARP());
+    // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+    // Implement_DXIL_ShuffleVector.
+    DAWN_SUPPRESS_TEST_IF(IsD3D12() && IsWARP());
 
     DoColorSpaceConversionTest();
 }

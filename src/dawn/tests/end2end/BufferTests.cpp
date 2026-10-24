@@ -25,21 +25,27 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-#include "dawn/tests/MockCallback.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/TestUtils.h"
-#include "dawn/utils/WGPUHelpers.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/tests/MockCallback.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/TestUtils.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -62,12 +68,21 @@ class BufferMappingTests : public DawnTestWithParams<BufferMappingTestParams> {
                                  GetParam().mFutureCallbackMode == wgpu::CallbackMode::WaitAnyOnly);
     }
 
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        std::vector<wgpu::FeatureName> requiredFeatures = {};
+
+        if (SupportsFeatures({wgpu::FeatureName::SharedBufferMemoryHostPointer})) {
+            requiredFeatures.push_back(wgpu::FeatureName::SharedBufferMemoryHostPointer);
+        }
+        return requiredFeatures;
+    }
+
     void MapAsyncAndWait(const wgpu::Buffer& buffer,
                          wgpu::MapMode mode,
                          size_t offset,
                          size_t size,
                          wgpu::BufferMapCallback<> cb = nullptr) {
-        wgpu::Future future;
+        wgpu::Future future{};
 
         if (cb) {
             future = buffer.MapAsync(mode, offset, size, GetParam().mFutureCallbackMode, cb);
@@ -254,6 +269,17 @@ TEST_P(BufferMappingTests, MapRead_InCallback) {
                     });
 }
 
+// Test that creating a buffer with `MapRead` but without `CopyDst` works.
+TEST_P(BufferMappingTests, MapReadWithoutCopyDst) {
+    wgpu::BufferDescriptor descriptor;
+    descriptor.size = 4;
+    descriptor.usage = wgpu::BufferUsage::MapRead;
+    wgpu::Buffer buffer = device.CreateBuffer(&descriptor);
+
+    MapAsyncAndWait(buffer, wgpu::MapMode::Read, 0, 4);
+    buffer.Unmap();
+}
+
 // Test that the simplest map write works.
 TEST_P(BufferMappingTests, MapWrite_Basic) {
     wgpu::Buffer buffer = CreateMapWriteBuffer(4);
@@ -280,6 +306,15 @@ TEST_P(BufferMappingTests, MapWrite_Basic) {
                   static_cast<wgpu::Status>(buffer.WriteMappedRange(0, &myData2, sizeof(myData2))));
         buffer.Unmap();
         EXPECT_BUFFER_U32_EQ(myData2, buffer, 0);
+    }
+    {
+        // ReadMappedRange and WriteMappedRange of 0 size.
+        MapAsyncAndWait(buffer, wgpu::MapMode::Write, 0, 4);
+        ASSERT_EQ(wgpu::Status::Success,
+                  static_cast<wgpu::Status>(buffer.ReadMappedRange(0, nullptr, 0)));
+        ASSERT_EQ(wgpu::Status::Success,
+                  static_cast<wgpu::Status>(buffer.WriteMappedRange(0, nullptr, 0)));
+        buffer.Unmap();
     }
 }
 
@@ -465,7 +500,7 @@ TEST_P(BufferMappingTests, MapWrite_ManySimultaneous) {
         buffers[i] = device.CreateBuffer(&descriptor);
     }
 
-    std::array<wgpu::Future, kBuffers> futures;
+    std::array<wgpu::Future, kBuffers> futures{};
     for (uint32_t i = 0; i < kBuffers; ++i) {
         futures[i] = buffers[i].MapAsync(
             wgpu::MapMode::Write, 0, descriptor.size, GetParam().mFutureCallbackMode,
@@ -513,6 +548,17 @@ TEST_P(BufferMappingTests, MapWrite_ManySimultaneous) {
     for (uint32_t i = 0; i < kBuffers; ++i) {
         EXPECT_BUFFER_U32_RANGE_EQ(myData.data(), buffers[i], 0, kDataSize);
     }
+}
+
+// Test that creating a buffer with `MapWrite` but without `CopySrc` works.
+TEST_P(BufferMappingTests, MapWriteWithoutCopyDst) {
+    wgpu::BufferDescriptor descriptor;
+    descriptor.size = 4;
+    descriptor.usage = wgpu::BufferUsage::MapWrite;
+    wgpu::Buffer buffer = device.CreateBuffer(&descriptor);
+
+    MapAsyncAndWait(buffer, wgpu::MapMode::Write, 0, 4);
+    buffer.Unmap();
 }
 
 // Test that the map offset isn't updated when the call is an error.
@@ -639,6 +685,8 @@ TEST_P(BufferMappingTests, RegressChromium1421170) {
 TEST_P(BufferMappingTests, WaitForOnSubmittedWorkDoneThenMap) {
     // WaitAnyOnly is not supported in wire.
     DAWN_TEST_UNSUPPORTED_IF(UsesWire());
+    /// Fail on Xclipse with ANGLE Vulkan.
+    DAWN_SUPPRESS_TEST_IF(IsSamsung() && IsOpenGLES() && IsANGLE());
 
     const uint32_t kExpectedValue = 42;
     constexpr size_t kSize = sizeof(kExpectedValue);
@@ -724,8 +772,9 @@ TEST_P(BufferMappingTests, WaitForOnSubmittedWorkDoneThenMap) {
 DAWN_INSTANTIATE_TEST_P(BufferMappingTests,
                         {D3D11Backend(), D3D11Backend({"d3d11_disable_cpu_buffers"}),
                          D3D11Backend({"auto_map_backend_buffer", "d3d11_disable_cpu_buffers"}),
-                         D3D12Backend(), MetalBackend(), OpenGLBackend(), OpenGLESBackend(),
-                         OpenGLESBackend({"gl_defer"}), VulkanBackend(), WebGPUBackend()},
+                         D3D12Backend(), D3D12Backend().EnableSharedMemoryInWire(), MetalBackend(),
+                         OpenGLBackend(), OpenGLESBackend(), OpenGLESBackend({"gl_defer"}),
+                         VulkanBackend(), WebGPUBackend()},
                         std::initializer_list<wgpu::CallbackMode>{
                             wgpu::CallbackMode::WaitAnyOnly, wgpu::CallbackMode::AllowProcessEvents,
                             wgpu::CallbackMode::AllowSpontaneous});
@@ -910,6 +959,15 @@ DAWN_INSTANTIATE_TEST_P(BufferMappingCallbackTests,
 
 class BufferMappedAtCreationTests : public DawnTest {
   protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        std::vector<wgpu::FeatureName> requiredFeatures = {};
+
+        if (SupportsFeatures({wgpu::FeatureName::SharedBufferMemoryHostPointer})) {
+            requiredFeatures.push_back(wgpu::FeatureName::SharedBufferMemoryHostPointer);
+        }
+        return requiredFeatures;
+    }
+
     const void* MapAsyncAndWait(const wgpu::Buffer& buffer, wgpu::MapMode mode, size_t size) {
         bool done = false;
         buffer.MapAsync(mode, 0, size, wgpu::CallbackMode::AllowProcessEvents,
@@ -970,15 +1028,18 @@ TEST_P(BufferMappedAtCreationTests, MapReadUsageSmall) {
 // Test that the simplest mappedAtCreation works for non-mappable buffers.
 TEST_P(BufferMappedAtCreationTests, NonMappableUsageSmall) {
     uint32_t myData = 4239;
-    wgpu::Buffer buffer = BufferMappedAtCreationWithData(wgpu::BufferUsage::CopySrc, {myData});
-    UnmapBuffer(buffer);
-
-    EXPECT_BUFFER_U32_EQ(myData, buffer, 0);
+    // Test with and without Uniform which may add additional padding at the end of the buffer.
+    for (wgpu::BufferUsage extraUsage : {{}, wgpu::BufferUsage::Uniform}) {
+        wgpu::Buffer buffer =
+            BufferMappedAtCreationWithData(wgpu::BufferUsage::CopySrc | extraUsage, {myData});
+        UnmapBuffer(buffer);
+        EXPECT_BUFFER_U32_EQ(myData, buffer, 0);
+    }
 }
 
 // Test mappedAtCreation for a large MapWrite buffer
 TEST_P(BufferMappedAtCreationTests, MapWriteUsageLarge) {
-    constexpr uint64_t kDataSize = 1000 * 1000;
+    constexpr uint64_t kDataSize = 1000ULL * 1000;
     std::vector<uint32_t> myData;
     for (uint32_t i = 0; i < kDataSize; ++i) {
         myData.push_back(i);
@@ -996,7 +1057,7 @@ TEST_P(BufferMappedAtCreationTests, MapReadUsageLarge) {
     // TODO(crbug.com/473894293): [Capture] buffer mapping: investigate.
     DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
 
-    constexpr uint64_t kDataSize = 1000 * 1000;
+    constexpr uint64_t kDataSize = 1000ULL * 1000;
     std::vector<uint32_t> myData;
     for (uint32_t i = 0; i < kDataSize; ++i) {
         myData.push_back(i);
@@ -1013,7 +1074,7 @@ TEST_P(BufferMappedAtCreationTests, MapReadUsageLarge) {
 
 // Test mappedAtCreation for a large non-mappable buffer
 TEST_P(BufferMappedAtCreationTests, NonMappableUsageLarge) {
-    constexpr uint64_t kDataSize = 1000 * 1000;
+    constexpr uint64_t kDataSize = 1000ULL * 1000;
     std::vector<uint32_t> myData;
     for (uint32_t i = 0; i < kDataSize; ++i) {
         myData.push_back(i);
@@ -1159,6 +1220,7 @@ DAWN_INSTANTIATE_TEST(BufferMappedAtCreationTests,
                       D3D11Backend({"d3d11_disable_cpu_buffers"}),
                       D3D11Backend({"auto_map_backend_buffer", "d3d11_disable_cpu_buffers"}),
                       D3D12Backend(),
+                      D3D12Backend().EnableSharedMemoryInWire(),
                       D3D12Backend({}, {"use_d3d12_resource_heap_tier2"}),
                       MetalBackend(),
                       OpenGLBackend(),
@@ -1167,7 +1229,16 @@ DAWN_INSTANTIATE_TEST(BufferMappedAtCreationTests,
                       VulkanBackend(),
                       WebGPUBackend());
 
-class BufferTests : public DawnTest {};
+class BufferTests : public DawnTest {
+  protected:
+    std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
+        std::vector<wgpu::FeatureName> features;
+        if (SupportsFeatures({wgpu::FeatureName::SharedBufferMemoryHostPointer})) {
+            features.push_back(wgpu::FeatureName::SharedBufferMemoryHostPointer);
+        }
+        return features;
+    }
+};
 
 // Test that creating a zero-buffer is allowed.
 TEST_P(BufferTests, ZeroSizedBuffer) {
@@ -1179,6 +1250,8 @@ TEST_P(BufferTests, ZeroSizedBuffer) {
 
 // Test that creating a very large buffers fails gracefully.
 TEST_P(BufferTests, CreateBufferOOM) {
+    DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
+
     // TODO(http://crbug.com/dawn/749): Missing support.
     DAWN_TEST_UNSUPPORTED_IF(IsOpenGL());
     DAWN_TEST_UNSUPPORTED_IF(IsAsan());
@@ -1221,6 +1294,8 @@ TEST_P(BufferTests, CreateBufferOOMWithValidationError) {
 
 // Test that a very large buffer mappedAtCreation fails gracefully.
 TEST_P(BufferTests, BufferMappedAtCreationOOM) {
+    DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
+
     // TODO(http://crbug.com/dawn/749): Missing support.
     DAWN_TEST_UNSUPPORTED_IF(IsOpenGL());
     DAWN_TEST_UNSUPPORTED_IF(IsAsan());
@@ -1376,6 +1451,8 @@ TEST_P(BufferTests, CreateErrorBuffer) {
 
 // Test that mapping an OOM buffer fails gracefully
 TEST_P(BufferTests, CreateBufferOOMMapAsync) {
+    DAWN_TEST_UNSUPPORTED_IF(HasToggleEnabled("skip_validation"));
+
     // TODO(http://crbug.com/dawn/749): Missing support.
     DAWN_TEST_UNSUPPORTED_IF(IsOpenGL());
     DAWN_TEST_UNSUPPORTED_IF(IsAsan());
@@ -1425,6 +1502,7 @@ TEST_P(BufferTests, CreateBufferOOMMapAsync) {
 DAWN_INSTANTIATE_TEST(BufferTests,
                       D3D11Backend(),
                       D3D12Backend(),
+                      D3D12Backend().EnableSharedMemoryInWire(),
                       MetalBackend(),
                       OpenGLBackend(),
                       OpenGLESBackend(),
@@ -1466,21 +1544,46 @@ DAWN_INSTANTIATE_TEST(BufferNoSuballocationTests,
                       VulkanBackend({"disable_resource_suballocation"}),
                       WebGPUBackend({"disable_resource_suballocation"}));
 
-class BufferMapExtendedUsagesTests : public DawnTest {
+// Selects which buffer-mapping extended-usages feature a test requires. Both features share the
+// same MapWrite test bodies; BufferMapWriteExtendedUsages only lifts usage restrictions for
+// MapWrite buffers, so its parameterization skips the MapRead-only paths.
+enum class MapExtendedUsagesFeature {
+    ReadWrite,  // wgpu::FeatureName::BufferMapExtendedUsages
+    WriteOnly,  // wgpu::FeatureName::BufferMapWriteExtendedUsages
+};
+
+std::ostream& operator<<(std::ostream& o, MapExtendedUsagesFeature feature) {
+    switch (feature) {
+        case MapExtendedUsagesFeature::ReadWrite:
+            return o << "ReadWrite";
+        case MapExtendedUsagesFeature::WriteOnly:
+            return o << "WriteOnly";
+    }
+    return o;
+}
+
+DAWN_TEST_PARAM_STRUCT(BufferMapExtendedUsagesTestParams, MapExtendedUsagesFeature);
+
+class BufferMapExtendedUsagesTests : public DawnTestWithParams<BufferMapExtendedUsagesTestParams> {
   protected:
-    void GetRequiredLimits(const dawn::utils::ComboLimits& supported,
-                           dawn::utils::ComboLimits& required) override {
-        required.maxStorageBuffersInVertexStage = supported.maxStorageBuffersInVertexStage;
-        required.maxStorageBuffersPerShaderStage = supported.maxStorageBuffersPerShaderStage;
+    wgpu::FeatureName RequiredFeature() const {
+        if (GetParam().mMapExtendedUsagesFeature == MapExtendedUsagesFeature::WriteOnly) {
+            return wgpu::FeatureName::BufferMapWriteExtendedUsages;
+        }
+        return wgpu::FeatureName::BufferMapExtendedUsages;
     }
 
-  protected:
+    // False when only MapWrite extended usages are enabled, so tests skip MapRead paths.
+    bool CanTestMapRead() const {
+        return GetParam().mMapExtendedUsagesFeature == MapExtendedUsagesFeature::ReadWrite;
+    }
+
     void SetUp() override {
-        DawnTest::SetUp();
+        DawnTestWithParams<BufferMapExtendedUsagesTestParams>::SetUp();
 
         DAWN_TEST_UNSUPPORTED_IF(UsesWire());
         // Skip all tests if the required feature is not supported.
-        DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({wgpu::FeatureName::BufferMapExtendedUsages}));
+        DAWN_TEST_UNSUPPORTED_IF(!SupportsFeatures({RequiredFeature()}));
 
         // TODO(crbug.com/473894293): [Capture] validation error: no CopyDst usage.
         DAWN_SUPPRESS_TEST_IF(IsCaptureReplayCheckingEnabled());
@@ -1488,23 +1591,16 @@ class BufferMapExtendedUsagesTests : public DawnTest {
 
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
         std::vector<wgpu::FeatureName> requiredFeatures = {};
-        if (!UsesWire() && SupportsFeatures({wgpu::FeatureName::BufferMapExtendedUsages})) {
-            requiredFeatures.push_back(wgpu::FeatureName::BufferMapExtendedUsages);
+        if (!UsesWire() && SupportsFeatures({RequiredFeature()})) {
+            requiredFeatures.push_back(RequiredFeature());
         }
         return requiredFeatures;
     }
 
-    void MapAsyncAndWait(const wgpu::Buffer& buffer,
-                         wgpu::MapMode mode,
-                         size_t offset,
-                         size_t size) {
-        wgpu::Future future = buffer.MapAsync(mode, offset, size, wgpu::CallbackMode::WaitAnyOnly,
-                                              [](wgpu::MapAsyncStatus status, wgpu::StringView) {
-                                                  ASSERT_EQ(wgpu::MapAsyncStatus::Success, status);
-                                              });
-        wgpu::FutureWaitInfo waitInfo = {future};
-        GetInstance().WaitAny(1, &waitInfo, UINT64_MAX);
-        ASSERT_TRUE(waitInfo.completed);
+    void GetRequiredLimits(const dawn::utils::ComboLimits& supported,
+                           dawn::utils::ComboLimits& required) override {
+        required.maxStorageBuffersInVertexStage = supported.maxStorageBuffersInVertexStage;
+        required.maxStorageBuffersPerShaderStage = supported.maxStorageBuffersPerShaderStage;
     }
 
     wgpu::Buffer CreateBufferFromData(const void* data, uint64_t size, wgpu::BufferUsage usage) {
@@ -1658,6 +1754,8 @@ class BufferMapExtendedUsagesTests : public DawnTest {
 
 // Test that the map read for any kind of buffer works
 TEST_P(BufferMapExtendedUsagesTests, MapReadWithAnyUsage) {
+    DAWN_TEST_UNSUPPORTED_IF(!CanTestMapRead());
+
     wgpu::BufferDescriptor descriptor;
     descriptor.size = 4;
 
@@ -1931,6 +2029,8 @@ TEST_P(BufferMapExtendedUsagesTests, MapWriteStorageBufferAndDraw) {
 
 // Test that map write a storage buffer, modifying it on GPU, then map read it on CPU works.
 TEST_P(BufferMapExtendedUsagesTests, MapWriteThenGPUWriteStorageBufferThenMapRead) {
+    DAWN_TEST_UNSUPPORTED_IF(!CanTestMapRead());
+
     const uint32_t kInitialValue = 1;
     const uint32_t kExpectedValue = 2;
     constexpr size_t kSize = sizeof(kExpectedValue);
@@ -2007,7 +2107,10 @@ void BufferMapExtendedUsagesTests::MixMapWriteAndGPUWriteBufferThenDraw(ColorSrc
     wgpu::Buffer ssbo;
     {
         wgpu::BufferUsage usage =
-            wgpu::BufferUsage::Storage | wgpu::BufferUsage::MapRead | wgpu::BufferUsage::MapWrite;
+            wgpu::BufferUsage::Storage | wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
+        if (CanTestMapRead()) {
+            usage |= wgpu::BufferUsage::MapRead;
+        }
 
         switch (colorSrc) {
             case ColorSrc::UniformBuffer:
@@ -2093,10 +2196,10 @@ void BufferMapExtendedUsagesTests::MixMapWriteAndGPUWriteBufferThenDraw(ColorSrc
         EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8::kWhite, finalRenderPass.color, 0, 0);
     }
 
-    // Read the final value.
-    MapAsyncAndWait(ssbo, wgpu::MapMode::Read, 0, kSize);
-    CheckMapping(ssbo.GetConstMappedRange(0, kSize), &kFinalColor, kSize);
-    ssbo.Unmap();
+    if (CanTestMapRead()) {
+        // Read the final value.
+        EXPECT_BUFFER_FLOAT_RANGE_EQ(kFinalColor, ssbo, 0, std::size(kFinalColor));
+    }
 }
 
 TEST_P(BufferMapExtendedUsagesTests, MixMapWriteAndGPUWriteVertexBufferThenDraw) {
@@ -2198,17 +2301,14 @@ TEST_P(BufferMapExtendedUsagesTests,
     }
 }
 
-DAWN_INSTANTIATE_TEST(BufferMapExtendedUsagesTests,
-                      D3D11Backend(),
-                      D3D11Backend({"d3d11_disable_map_on_default_buffers"}),
-                      D3D11Backend({"auto_map_backend_buffer", "d3d11_disable_cpu_buffers"}),
-                      D3D12Backend(),
-                      MetalBackend(),
-                      OpenGLBackend(),
-                      OpenGLESBackend(),
-                      OpenGLESBackend({"gl_defer"}),
-                      VulkanBackend(),
-                      WebGPUBackend());
+// The tests with `WriteOnly` parameter will only be run on the backends that support
+// `BufferMapWriteExtendedUsages`.
+DAWN_INSTANTIATE_TEST_P(BufferMapExtendedUsagesTests,
+                        {D3D11Backend(), D3D11Backend({"d3d11_disable_map_on_default_buffers"}),
+                         D3D11Backend({"auto_map_backend_buffer", "d3d11_disable_cpu_buffers"}),
+                         D3D12Backend(), MetalBackend(), OpenGLBackend(), OpenGLESBackend(),
+                         OpenGLESBackend({"gl_defer"}), VulkanBackend(), WebGPUBackend()},
+                        {MapExtendedUsagesFeature::ReadWrite, MapExtendedUsagesFeature::WriteOnly});
 
 }  // anonymous namespace
 }  // namespace dawn

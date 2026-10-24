@@ -25,19 +25,21 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/tests/white_box/VulkanImageWrappingTests.h"
+#include "src/dawn/tests/white_box/VulkanImageWrappingTests.h"
 
 #include <utility>
 
-#include "dawn/common/Math.h"
-#include "dawn/native/Adapter.h"
-#include "dawn/native/vulkan/DeviceVk.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/tests/white_box/VulkanImageWrappingTests_DmaBuf.h"
-#include "dawn/tests/white_box/VulkanImageWrappingTests_OpaqueFD.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/common/Math.h"
+#include "src/dawn/native/Adapter.h"
+#include "src/dawn/native/vulkan/DeviceVk.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/tests/white_box/VulkanImageWrappingTests_DmaBuf.h"
+#include "src/dawn/tests/white_box/VulkanImageWrappingTests_OpaqueFD.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/compiler.h"
+#include "src/utils/platform.h"
 
 namespace dawn::native::vulkan {
 
@@ -68,12 +70,22 @@ DAWN_TEST_PARAM_STRUCT(ImageWrappingParams,
 class VulkanImageWrappingTestBase : public DawnTestWithParams<ImageWrappingParams> {
   protected:
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        return {wgpu::FeatureName::DawnInternalUsages};
+        return {
+            wgpu::FeatureName::DawnInternalUsages,
+#if DAWN_PLATFORM_IS(CHROMEOS)
+            wgpu::FeatureName::SharedFenceSyncFD,
+#else
+            wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD,
+#endif
+        };
     }
 
   public:
     void SetUp() override {
         DawnTestWithParams::SetUp();
+        if (IsSkipped() || HasFatalFailure()) {
+            return;
+        }
         DAWN_TEST_UNSUPPORTED_IF(UsesWire());
 
         // TODO(dawn:1552): Nvidia doesn't seem to correctly reflect whether an import requires a
@@ -300,17 +312,15 @@ class VulkanImageWrappingUsageTests : public VulkanImageWrappingTestBase {
   public:
     void SetUp() override {
         VulkanImageWrappingTestBase::SetUp();
-        if (UsesWire()) {
+        if (IsSkipped() || HasFatalFailure()) {
             return;
         }
 
         // Create another device based on the original
         adapterBase = native::FromAPI(device.Get())->GetAdapter();
         deviceDescriptor.nextInChain = &deviceTogglesDesc;
-        deviceTogglesDesc.enabledToggles = GetParam().forceEnabledWorkarounds.data();
-        deviceTogglesDesc.enabledToggleCount = GetParam().forceEnabledWorkarounds.size();
-        deviceTogglesDesc.disabledToggles = GetParam().forceDisabledWorkarounds.data();
-        deviceTogglesDesc.disabledToggleCount = GetParam().forceDisabledWorkarounds.size();
+        deviceTogglesDesc.enabledToggles = GetParam().forceEnabledWorkarounds;
+        deviceTogglesDesc.disabledToggles = GetParam().forceDisabledWorkarounds;
 
         secondDeviceVk = native::vulkan::ToBackend(adapterBase->APICreateDevice(&deviceDescriptor));
         secondDevice = wgpu::Device::Acquire(native::ToAPI(secondDeviceVk));
@@ -855,10 +865,13 @@ TEST_P(VulkanImageWrappingUsageTests, LargerImage) {
             float normCol = static_cast<float>(col) / width;
             float dist = sqrt(normRow * normRow + normCol * normCol) * 3;
             dist = dist - static_cast<int>(dist);
-            data[4 * (row * width + col)] = static_cast<unsigned char>(dist * 255);
-            data[4 * (row * width + col) + 1] = static_cast<unsigned char>(dist * 255);
-            data[4 * (row * width + col) + 2] = static_cast<unsigned char>(dist * 255);
-            data[4 * (row * width + col) + 3] = 255;
+            data[static_cast<size_t>(4) * (row * width + col)] =
+                static_cast<unsigned char>(dist * 255);
+            data[static_cast<size_t>(4) * (row * width + col) + 1] =
+                static_cast<unsigned char>(dist * 255);
+            data[static_cast<size_t>(4) * (row * width + col) + 2] =
+                static_cast<unsigned char>(dist * 255);
+            data[static_cast<size_t>(4) * (row * width + col) + 3] = 255;
         }
     }
 
@@ -906,8 +919,8 @@ TEST_P(VulkanImageWrappingUsageTests, LargerImage) {
     }
 
     // Check the image is not corrupted on |device|
-    EXPECT_BUFFER_U32_RANGE_EQ(reinterpret_cast<uint32_t*>(data.data()), copyDstBuffer, 0,
-                               data.size() / 4);
+    DAWN_UNSAFE_TODO(EXPECT_BUFFER_U32_RANGE_EQ(reinterpret_cast<uint32_t*>(data.data()),
+                                                copyDstBuffer, 0, data.size() / 4));
 
     IgnoreSignalSemaphore(nextWrappedTexture);
 }
@@ -1013,7 +1026,8 @@ TEST_P(VulkanImageWrappingUsageTests, SRGBReinterpretation) {
 class VulkanImageWrappingMultithreadTests : public VulkanImageWrappingUsageTests {
   protected:
     std::vector<wgpu::FeatureName> GetRequiredFeatures() override {
-        std::vector<wgpu::FeatureName> features;
+        std::vector<wgpu::FeatureName> features =
+            VulkanImageWrappingUsageTests::GetRequiredFeatures();
         // TODO(crbug.com/dawn/1678): DawnWire doesn't support thread safe API yet.
         if (!UsesWire()) {
             features.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
@@ -1023,6 +1037,9 @@ class VulkanImageWrappingMultithreadTests : public VulkanImageWrappingUsageTests
 
     void SetUp() override {
         VulkanImageWrappingUsageTests::SetUp();
+        if (IsSkipped() || HasFatalFailure()) {
+            return;
+        }
         // TODO(crbug.com/dawn/1678): DawnWire doesn't support thread safe API yet.
         DAWN_TEST_UNSUPPORTED_IF(UsesWire());
     }

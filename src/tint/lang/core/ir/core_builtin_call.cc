@@ -132,6 +132,7 @@ tint::core::ir::Instruction::Accesses CoreBuiltinCall::GetSideEffects() const {
         case BuiltinFn::kAbs:
         case BuiltinFn::kAcos:
         case BuiltinFn::kAcosh:
+        case BuiltinFn::kAddSat:
         case BuiltinFn::kAll:
         case BuiltinFn::kAny:
         case BuiltinFn::kArrayLength:
@@ -175,6 +176,7 @@ tint::core::ir::Instruction::Accesses CoreBuiltinCall::GetSideEffects() const {
         case BuiltinFn::kMin:
         case BuiltinFn::kMix:
         case BuiltinFn::kModf:
+        case BuiltinFn::kMulSat:
         case BuiltinFn::kNormalize:
         case BuiltinFn::kPack2X16Float:
         case BuiltinFn::kPack2X16Snorm:

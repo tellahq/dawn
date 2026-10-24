@@ -35,6 +35,7 @@
 #include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/access.h"
+#include "src/tint/lang/core/ir/array_count.h"
 #include "src/tint/lang/core/ir/binary.h"
 #include "src/tint/lang/core/ir/block.h"
 #include "src/tint/lang/core/ir/break_if.h"
@@ -67,7 +68,7 @@
 #include "src/tint/lang/core/ir/unary.h"
 #include "src/tint/lang/core/ir/unreachable.h"
 #include "src/tint/lang/core/ir/user_call.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/var.h"
 #include "src/tint/lang/core/type/atomic.h"
 #include "src/tint/lang/core/type/binding_array.h"
@@ -91,6 +92,7 @@
 #include "src/tint/utils/macros/scoped_assignment.h"
 #include "src/tint/utils/math/math.h"
 #include "src/tint/utils/rtti/switch.h"
+#include "src/utils/compiler.h"
 
 using namespace tint::core::fluent_types;  // NOLINT
 
@@ -99,16 +101,10 @@ namespace {
 
 class State {
   public:
-    explicit State(const core::ir::Module& m) : mod(m) {}
+    explicit State(core::ir::Module& m) : mod(m) {}
 
     Program Run(const Options& options) {
-        core::ir::Capabilities caps{
-            core::ir::Capability::kAllowMultipleEntryPoints,
-            core::ir::Capability::kAllowOverrides,
-            core::ir::Capability::kAllowPhonyInstructions,
-            core::ir::Capability::kAllowRefTypes,
-        };
-        if (auto res = Validate(mod, caps, "before wgsl.to_program"); res != Success) {
+        if (auto res = Validate(mod, "before wgsl.to_program"); res != Success) {
             // IR module failed validation.
             b.Diagnostics().AddError(Source{}) << res.Failure();
             return Program{resolver::Resolve(b)};
@@ -151,7 +147,7 @@ class State {
 
   private:
     /// The source IR module
-    const core::ir::Module& mod;
+    core::ir::Module& mod;
 
     /// The target ProgramBuilder
     ProgramBuilder b;
@@ -674,7 +670,7 @@ class State {
     void Let(const core::ir::Let* let) {
         auto* result = let->Result();
         Symbol name = NameFor(result);
-        Append(b.Decl(b.Let(name, Expr(let->Value()))));
+        Append(b.Decl(b.Let(name, ast::Type{}, Expr(let->Value()))));
         Bind(result, name);
     }
 
@@ -743,8 +739,16 @@ class State {
                 const ast::CallExpression* expr = nullptr;
                 if (!c->ExplicitTemplateParams().IsEmpty()) {
                     Vector<const ast::Expression*, 4> tmpl_args;
-                    for (auto* e : c->ExplicitTemplateParams()) {
-                        tmpl_args.Push(Type(e).expr);
+                    for (auto& e : c->ExplicitTemplateParams()) {
+                        if (std::holds_alternative<const core::type::Type*>(e)) {
+                            tmpl_args.Push(Type(std::get<const core::type::Type*>(e)).expr);
+                        } else if (std::holds_alternative<core::Majorness>(e)) {
+                            StringStream str;
+                            str << std::get<core::Majorness>(e);
+                            tmpl_args.Push(b.Expr(str.str()));
+                        } else {
+                            TINT_UNREACHABLE() << "Unhandled template parameter kind";
+                        }
                     }
                     expr = b.Call(b.Ident(c->Func(), std::move(tmpl_args)), std::move(args));
                 } else {
@@ -858,8 +862,11 @@ class State {
             }
             components.Push(xyzw[i]);
         }
-        auto* swizzle =
-            b.MemberAccessor(vec, std::string_view(components.begin(), components.Length()));
+        // SAFETY: `components` contains at most 4 elements populated from the valid `xyzw` array
+        // based on the swizzle indices, which is bounds-safe for this view.
+        auto* swizzle = b.MemberAccessor(
+            vec,
+            DAWN_UNSAFE_BUFFERS(std::string_view(components.AsSpan().data(), components.Length())));
         Bind(s->Result(), swizzle);
     }
 
@@ -1033,14 +1040,16 @@ class State {
                 }
 
                 auto el = Type(a->ElemType());
-                if (a->Count()->Is<core::type::RuntimeArrayCount>()) {
-                    return b.ty.array(el);
-                }
-                auto count = a->ConstantCount();
-                if (!count) {
-                    TINT_IR_ICE(mod) << core::type::Array::kErrExpectedConstantCount;
-                }
-                return b.ty.array(el, u32(count.value()));
+                return tint::Switch(
+                    a->Count(),
+                    [&](const core::type::RuntimeArrayCount*) { return b.ty.array(el); },
+                    [&](const core::type::ConstantArrayCount* count) {
+                        return b.ty.array(el, u32(count->value));
+                    },
+                    [&](const core::ir::type::ValueArrayCount* count) {
+                        return b.ty.array(el, Expr(count->value));
+                    },
+                    TINT_ICE_ON_NO_MATCH);
             },
             [&](const core::type::Struct* s) { return Struct(s); },
             [&](const core::type::Atomic* a) { return b.ty.atomic(Type(a->Type())); },
@@ -1286,7 +1295,7 @@ class State {
     /// creates a phony assignment with @p expr.
     void Bind(const core::ir::Value* value, const ast::Expression* expr) {
         TINT_IR_ASSERT(mod, value);
-        if (value->IsUsed()) {
+        if (value->IsUsed() || current_function_ == nullptr) {
             if (!bindings_.Add(value, ValueBinding{.ast_expr = expr})) {
                 TINT_IR_ICE(mod) << "Bind(" << value->TypeInfo().name
                                  << ") called twice for same value";
@@ -1410,7 +1419,7 @@ class State {
 
 }  // namespace
 
-Program IRToProgram(const core::ir::Module& i, const Options& options) {
+Program IRToProgram(core::ir::Module& i, const Options& options) {
     return State{i}.Run(options);
 }
 

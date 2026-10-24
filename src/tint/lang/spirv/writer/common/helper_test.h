@@ -37,7 +37,7 @@
 #include "spirv-tools/libspirv.hpp"
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/disassembler.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/spirv/writer/common/spv_dump_test.h"
 #include "src/tint/lang/spirv/writer/writer.h"
@@ -93,6 +93,7 @@ class SpirvWriterTestHelperBase : public BASE {
     core::type::Manager& ty{mod.Types()};
 
   protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
     /// SPIR-V output.
     std::string output_;
 

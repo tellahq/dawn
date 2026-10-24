@@ -32,16 +32,16 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/common/Algebra.h"
-#include "dawn/common/Assert.h"
-#include "dawn/common/ColorSpace.h"
-#include "dawn/common/Range.h"
-#include "dawn/native/vulkan/DeviceVk.h"
-#include "dawn/native/vulkan/UtilsVulkan.h"
-#include "dawn/native/vulkan/VulkanError.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Algebra.h"
+#include "src/dawn/common/ColorSpace.h"
+#include "src/dawn/common/Range.h"
+#include "src/dawn/native/vulkan/DeviceVk.h"
+#include "src/dawn/native/vulkan/UtilsVulkan.h"
+#include "src/dawn/native/vulkan/VulkanError.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
+#include "src/utils/assert.h"
 #include "vulkan/vulkan_core.h"
 
 namespace dawn {
@@ -77,7 +77,8 @@ AHardwareBuffer* MakeY8Cb8Cr8AHB(uint32_t width,
         uint8_t* dstData = static_cast<uint8_t*>(dst.data);
         for (uint32_t x : Range(srcWidth)) {
             for (uint32_t y : Range(srcHeight)) {
-                dstData[y * dst.rowStride + x * dst.pixelStride] = src[y * srcWidth + x];
+                DAWN_UNSAFE_TODO(dstData[y * dst.rowStride + x * dst.pixelStride]) =
+                    src[y * srcWidth + x];
             }
         }
     };
@@ -467,17 +468,17 @@ class SharedTextureMemoryVulkanYCbCrParamsTests : public DawnTestWithParams<VkYC
         // Vulkan has CrYCb (because Cr is "red", Y is "green" and Cb is "blue") but we want YCbCr.
         // Stay in 4D to undo the swizzle as it is before the application of the range, but have the
         // redo in 3D because it is after the range is applied.
-        constexpr math::Mat4x4f kUndoVulkanSwizzle = {
+        constexpr auto kUndoVulkanSwizzle = math::Mat4x4f::FromRows({
+            {0, 1, 0, 0},
             {0, 0, 1, 0},
             {1, 0, 0, 0},
-            {0, 1, 0, 0},
             {0, 0, 0, 1},
-        };
-        constexpr math::Mat3x3f kRedoVulkanSwizzle = {
-            {0, 1, 0},
+        });
+        constexpr auto kRedoVulkanSwizzle = math::Mat3x3f::FromRows({
             {0, 0, 1},
             {1, 0, 0},
-        };
+            {0, 1, 0},
+        });
 
         math::Mat4x3f rangeTransform;
         switch (GetParam().mVkYCbCrRange) {
@@ -624,7 +625,9 @@ TEST_P(SharedTextureMemoryVulkanYCbCrParamsTests, SampleY8Cb8Cr8AHB) {
         auto ycbcr = math::Vec4f(cr / 255.0, y / 255.0, cb / 255.0, 1.0);
         auto rgb = math::Mul(ycbcrToRgb, ycbcr);
 
-        auto expected = utils::RGBA8(rgb[0] * 255, rgb[1] * 255, rgb[2] * 255, 255);
+        auto expected =
+            utils::RGBA8(static_cast<uint8_t>(rgb[0] * 255), static_cast<uint8_t>(rgb[1] * 255),
+                         static_cast<uint8_t>(rgb[2] * 255), 255);
         auto bottom = utils::RGBA8(expected.r - 1, expected.g - 1, expected.b - 1, 255);
         auto top = utils::RGBA8(expected.r + 1, expected.g + 1, expected.b + 1, 255);
 
@@ -774,6 +777,64 @@ TEST_P(SharedTextureMemoryOpaqueYCbCrAndroidForExternalTexture, NoopSampleY8Cb8C
                           1);
     EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8(yData[3], cbData[0], crData[0], 255), renderPass.color, 1,
                           1);
+}
+
+// Check that sampling a YCbCr AHB with a linear sampler works.
+TEST_P(SharedTextureMemoryOpaqueYCbCrAndroidForExternalTexture,
+       SampleExternalTextureWithLinearSampler) {
+    const std::array<uint8_t, 4> yData = {50, 100, 150, 200};
+    const std::array<uint8_t, 1> cbData = {130};
+    const std::array<uint8_t, 1> crData = {140};
+    AHardwareBuffer* ahb = MakeY8Cb8Cr8AHB(2, 2, yData, cbData, crData);
+
+    ImportedAHB imported = ImportAHB(ahb);
+    AHardwareBuffer_release(ahb);
+
+    wgpu::ExternalTexture externalTexture =
+        utils::MakePassthroughExternalTexture(device, imported.texture);
+
+    wgpu::ShaderModule module = utils::CreateShaderModule(device, R"(
+        @vertex fn quad(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
+            const pos = array(
+                vec2f(-1.0, -1.0),
+                vec2f( 3.0, -1.0),
+                vec2f(-1.0,  3.0));
+            return vec4f(pos[i], 0.0, 1.0);
+        }
+
+        @group(0) @binding(0) var s : sampler;
+        @group(0) @binding(1) var t : texture_external;
+        @fragment fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+            return textureSampleBaseClampToEdge(t, s, pos.xy / 2);
+        }
+    )");
+
+    utils::ComboRenderPipelineDescriptor pDesc;
+    pDesc.vertex.module = module;
+    pDesc.cFragment.module = module;
+    pDesc.cTargets[0].format = wgpu::TextureFormat::RGBA8Unorm;
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&pDesc);
+
+    // Provide a sampler with Linear filtering.
+    wgpu::SamplerDescriptor sDesc;
+    sDesc.minFilter = wgpu::FilterMode::Linear;
+    sDesc.magFilter = wgpu::FilterMode::Linear;
+    wgpu::Sampler linearSampler = device.CreateSampler(&sDesc);
+
+    wgpu::BindGroup bg = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                                              {{0, linearSampler}, {1, externalTexture}});
+
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    utils::BasicRenderPass renderPass =
+        utils::CreateBasicRenderPass(device, 2, 2, wgpu::TextureFormat::RGBA8Unorm);
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass.renderPassInfo);
+    pass.SetPipeline(pipeline);
+    pass.SetBindGroup(0, bg);
+    pass.Draw(3);
+    pass.End();
+
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
 }
 
 // Check that a pipeline works when JITted with a mixture of RGBA / YCbCr / Multiplanar external
@@ -953,7 +1014,7 @@ TEST_P(SharedTextureMemoryOpaqueYCbCrAndroidForExternalTexture,
     }
 }
 
-// TODO
+// TODO(https://crbug.com/468988322):
 //  - Same pipeline check bindgroups get reapplied? Same pipeline check immediates get reapplied.
 
 DAWN_INSTANTIATE_TEST(SharedTextureMemoryOpaqueYCbCrAndroidForExternalTexture, VulkanBackend());

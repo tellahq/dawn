@@ -27,6 +27,7 @@
 
 #include "src/tint/lang/wgsl/inspector/inspector.h"
 
+#include <algorithm>
 #include <functional>
 #include <unordered_set>
 #include <utility>
@@ -119,8 +120,10 @@ std::tuple<ComponentType, CompositionType> CalculateComponentAndComposition(
     return {componentType, compositionType};
 }
 
-ResourceBinding ConvertBufferToResourceBinding(const tint::sem::GlobalVariable* buffer,
-                                               std::optional<uint64_t> buffer_size = std::nullopt) {
+ResourceBinding ConvertBufferToResourceBinding(
+    const tint::sem::GlobalVariable* buffer,
+    std::optional<uint64_t> buffer_size = std::nullopt,
+    std::optional<uint64_t> subgroup_matrix_size = std::nullopt) {
     ResourceBinding result;
     result.bind_group = buffer->Attributes().binding_point->group;
     result.binding = buffer->Attributes().binding_point->binding;
@@ -130,6 +133,9 @@ ResourceBinding ConvertBufferToResourceBinding(const tint::sem::GlobalVariable* 
     result.size = unwrapped_type->Size();
     if (buffer_size) {
         result.size = static_cast<uint32_t>(buffer_size.value());
+    }
+    if (subgroup_matrix_size) {
+        result.size = std::max(result.size, subgroup_matrix_size.value());
     }
     result.size_no_padding = result.size;
     if (auto* str = unwrapped_type->As<sem::Struct>()) {
@@ -478,8 +484,9 @@ std::vector<ResourceBinding> Inspector::GetResourceBindings(const std::string& e
 
             case core::AddressSpace::kUniform:
             case core::AddressSpace::kStorage: {
-                auto size = func_sem->TransitivelyReferencedUnsizedBufferSize(global);
-                result.push_back(ConvertBufferToResourceBinding(global, size));
+                auto buffer_size = func_sem->TransitivelyReferencedUnsizedBufferSize(global);
+                auto matrix_size = func_sem->TransitivelyReferencedSubgroupMatrixSize(global);
+                result.push_back(ConvertBufferToResourceBinding(global, buffer_size, matrix_size));
                 break;
             }
             case core::AddressSpace::kHandle:
@@ -741,7 +748,7 @@ const Inspector::EntryPointTextureMetadata& Inspector::ComputeTextureMetadata(
 
                     // A texture of `sem::Call` means we're dealing with a `getResource` or
                     // `hasResource` call. Skip it.
-                    if (call->Arguments()[size_t(texture_index)]->Is<sem::Call>()) {
+                    if (call->Arguments()[static_cast<size_t>(texture_index)]->Is<sem::Call>()) {
                         return;
                     }
 
@@ -752,12 +759,14 @@ const Inspector::EntryPointTextureMetadata& Inspector::ComputeTextureMetadata(
                     const GlobalSet* sampler_globals = &scratch_sampler_global;
                     if (sampler_index != -1) {
                         sampler_globals = GetGlobalsForArgument(
-                            fn, call->Arguments()[size_t(sampler_index)], &scratch_sampler_global);
+                            fn, call->Arguments()[static_cast<size_t>(sampler_index)],
+                            &scratch_sampler_global);
                     }
 
                     GlobalSet scratch_texture_global;
                     const GlobalSet* texture_globals = GetGlobalsForArgument(
-                        fn, call->Arguments()[size_t(texture_index)], &scratch_texture_global);
+                        fn, call->Arguments()[static_cast<size_t>(texture_index)],
+                        &scratch_texture_global);
 
                     RecordBuiltinCallMetadata(call, builtin, *texture_globals, *sampler_globals);
                 });
@@ -1001,7 +1010,7 @@ uint32_t Inspector::ComputeImmediateDataSize(const ast::Function* func) const {
         }
     }
 
-    return size;
+    return tint::RoundUp(static_cast<uint32_t>(kImmediateSlotSize), size);
 }
 
 std::vector<PixelLocalMemberType> Inspector::ComputePixelLocalMemberTypes(

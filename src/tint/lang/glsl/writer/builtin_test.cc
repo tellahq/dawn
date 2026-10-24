@@ -38,6 +38,7 @@
 #include "src/tint/lang/core/type/sampler_kind.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
+#include "src/tint/lang/glsl/ir/builtin_call.h"
 #include "src/tint/lang/glsl/writer/helper_test.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
@@ -334,7 +335,7 @@ void main_inner(uint tint_local_index) {
     atomicExchange(v.b, 0u);
   }
   barrier();
-  int x = atomicAdd(v.a, int((~(uint(123)) + 1u)));
+  int x = atomicAdd(v.a, -123);
   uint y = atomicAdd(v.b, -(123u));
 }
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -570,12 +571,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_I32ToVec2F16) {
 precision highp float;
 precision highp int;
 
-f16vec2 tint_bitcast_to_f16(int src) {
+f16vec2 tint_bitcast_to_16bit(int src) {
   return unpackFloat2x16(uint(src));
 }
 void main() {
   int a = 1;
-  f16vec2 x = tint_bitcast_to_f16(a);
+  f16vec2 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -594,12 +595,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2F16ToI32) {
 precision highp float;
 precision highp int;
 
-int tint_bitcast_from_f16(f16vec2 src) {
+int tint_bitcast_from_16bit(f16vec2 src) {
   return int(packFloat2x16(src));
 }
 void main() {
   f16vec2 a = f16vec2(1.0hf, 2.0hf);
-  int x = tint_bitcast_from_f16(a);
+  int x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -618,12 +619,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_U32ToVec2F16) {
 precision highp float;
 precision highp int;
 
-f16vec2 tint_bitcast_to_f16(uint src) {
+f16vec2 tint_bitcast_to_16bit(uint src) {
   return unpackFloat2x16(src);
 }
 void main() {
   uint a = 1u;
-  f16vec2 x = tint_bitcast_to_f16(a);
+  f16vec2 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -642,12 +643,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2F16ToU32) {
 precision highp float;
 precision highp int;
 
-uint tint_bitcast_from_f16(f16vec2 src) {
+uint tint_bitcast_from_16bit(f16vec2 src) {
   return packFloat2x16(src);
 }
 void main() {
   f16vec2 a = f16vec2(1.0hf, 2.0hf);
-  uint x = tint_bitcast_from_f16(a);
+  uint x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -666,12 +667,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_F32ToVec2F16) {
 precision highp float;
 precision highp int;
 
-f16vec2 tint_bitcast_to_f16(float src) {
+f16vec2 tint_bitcast_to_16bit(float src) {
   return unpackFloat2x16(floatBitsToUint(src));
 }
 void main() {
   float a = 1.0f;
-  f16vec2 x = tint_bitcast_to_f16(a);
+  f16vec2 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -690,12 +691,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2F16ToF32) {
 precision highp float;
 precision highp int;
 
-float tint_bitcast_from_f16(f16vec2 src) {
+float tint_bitcast_from_16bit(f16vec2 src) {
   return uintBitsToFloat(packFloat2x16(src));
 }
 void main() {
   f16vec2 a = f16vec2(1.0hf, 2.0hf);
-  float x = tint_bitcast_from_f16(a);
+  float x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -714,13 +715,13 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2I32ToVec4F16) {
 precision highp float;
 precision highp int;
 
-f16vec4 tint_bitcast_to_f16(ivec2 src) {
+f16vec4 tint_bitcast_to_16bit(ivec2 src) {
   uvec2 v = uvec2(src);
   return f16vec4(unpackFloat2x16(v.x), unpackFloat2x16(v.y));
 }
 void main() {
   ivec2 a = ivec2(1, 2);
-  f16vec4 x = tint_bitcast_to_f16(a);
+  f16vec4 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -739,12 +740,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec4F16ToVec2I32) {
 precision highp float;
 precision highp int;
 
-ivec2 tint_bitcast_from_f16(f16vec4 src) {
+ivec2 tint_bitcast_from_16bit(f16vec4 src) {
   return ivec2(uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw)));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
-  ivec2 x = tint_bitcast_from_f16(a);
+  ivec2 x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -763,12 +764,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2U32ToVec4F16) {
 precision highp float;
 precision highp int;
 
-f16vec4 tint_bitcast_to_f16(uvec2 src) {
+f16vec4 tint_bitcast_to_16bit(uvec2 src) {
   return f16vec4(unpackFloat2x16(src.x), unpackFloat2x16(src.y));
 }
 void main() {
   uvec2 a = uvec2(1u, 2u);
-  f16vec4 x = tint_bitcast_to_f16(a);
+  f16vec4 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -787,12 +788,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec4F16ToVec2U32) {
 precision highp float;
 precision highp int;
 
-uvec2 tint_bitcast_from_f16(f16vec4 src) {
+uvec2 tint_bitcast_from_16bit(f16vec4 src) {
   return uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
-  uvec2 x = tint_bitcast_from_f16(a);
+  uvec2 x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -811,12 +812,13 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec2F32ToVec4F16) {
 precision highp float;
 precision highp int;
 
-f16vec4 tint_bitcast_to_f16(vec2 src) {
-  return f16vec4(unpackFloat2x16(floatBitsToUint(src).x), unpackFloat2x16(floatBitsToUint(src).y));
+f16vec4 tint_bitcast_to_16bit(vec2 src) {
+  uvec2 v = floatBitsToUint(src);
+  return f16vec4(unpackFloat2x16(v.x), unpackFloat2x16(v.y));
 }
 void main() {
   vec2 a = vec2(1.0f, 2.0f);
-  f16vec4 x = tint_bitcast_to_f16(a);
+  f16vec4 x = tint_bitcast_to_16bit(a);
 }
 )");
 }
@@ -835,12 +837,12 @@ TEST_F(GlslWriterTest, BuiltinBitcast_Vec4F16ToVec2F32) {
 precision highp float;
 precision highp int;
 
-vec2 tint_bitcast_from_f16(f16vec4 src) {
+vec2 tint_bitcast_from_16bit(f16vec4 src) {
   return uintBitsToFloat(uvec2(packFloat2x16(src.xy), packFloat2x16(src.zw)));
 }
 void main() {
   f16vec4 a = f16vec4(1.0hf, 2.0hf, 3.0hf, 4.0hf);
-  vec2 x = tint_bitcast_from_f16(a);
+  vec2 x = tint_bitcast_from_16bit(a);
 }
 )");
 }
@@ -925,7 +927,7 @@ uniform f_TintTextureUniformData_ubo {
 } v_1;
 uniform highp sampler2D f_v;
 void main() {
-  uvec2 x = uvec2(textureSize(f_v, int(min(3u, (v_1.metadata[(0u / 4u)][(0u % 4u)] - 1u)))));
+  uvec2 x = uvec2(textureSize(f_v, int(min(3u, (v_1.metadata[0u].x - 1u)))));
 }
 )");
 }
@@ -1006,7 +1008,8 @@ void main() {
 TEST_F(GlslWriterTest, CountOneBits) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kCountOneBits, 1_u));
+        auto* a = b.Let("a", 1_u);
+        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kCountOneBits, a));
         b.Return(func);
     });
 
@@ -1016,7 +1019,8 @@ TEST_F(GlslWriterTest, CountOneBits) {
 precision highp int;
 
 void main() {
-  uint x = uint(bitCount(1u));
+  uint a = 1u;
+  uint x = uint(bitCount(a));
 }
 )");
 }
@@ -1024,7 +1028,10 @@ void main() {
 TEST_F(GlslWriterTest, ExtractBits) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kExtractBits, 1_u, 2_u, 3_u));
+        auto* v = b.Let("v", 1_u);
+        auto* offset = b.Let("offset", 2_u);
+        auto* count = b.Let("count", 3_u);
+        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kExtractBits, v, offset, count));
         b.Return(func);
     });
 
@@ -1034,8 +1041,12 @@ TEST_F(GlslWriterTest, ExtractBits) {
 precision highp int;
 
 void main() {
-  int v = int(min(2u, 32u));
-  uint x = bitfieldExtract(1u, v, int(min(3u, (32u - min(2u, 32u)))));
+  uint v = 1u;
+  uint offset = 2u;
+  uint count = 3u;
+  uint v_1 = min(offset, 32u);
+  int v_2 = int(v_1);
+  uint x = bitfieldExtract(v, v_2, int(min(count, (32u - v_1))));
 }
 )");
 }
@@ -1043,7 +1054,11 @@ void main() {
 TEST_F(GlslWriterTest, InsertBits) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kInsertBits, 1_u, 2_u, 3_u, 4_u));
+        auto* v = b.Let("v", 1_u);
+        auto* n = b.Let("n", 2_u);
+        auto* offset = b.Let("offset", 3_u);
+        auto* count = b.Let("count", 4_u);
+        b.Let("x", b.Call(ty.u32(), core::BuiltinFn::kInsertBits, v, n, offset, count));
         b.Return(func);
     });
 
@@ -1053,8 +1068,13 @@ TEST_F(GlslWriterTest, InsertBits) {
 precision highp int;
 
 void main() {
-  int v = int(min(3u, 32u));
-  uint x = bitfieldInsert(1u, 2u, v, int(min(4u, (32u - min(3u, 32u)))));
+  uint v = 1u;
+  uint n = 2u;
+  uint offset = 3u;
+  uint count = 4u;
+  uint v_1 = min(offset, 32u);
+  int v_2 = int(v_1);
+  uint x = bitfieldInsert(v, n, v_2, int(min(count, (32u - v_1))));
 }
 )");
 }
@@ -1223,8 +1243,7 @@ precision highp int;
 
 uniform highp sampler2D f_t;
 void main() {
-  ivec2 v = ivec2(uvec2(1u, 0u));
-  vec4 x = texelFetch(f_t, v, int(3u));
+  vec4 x = texelFetch(f_t, ivec2(1, 0), 3);
 }
 )");
 }
@@ -1253,8 +1272,7 @@ precision highp int;
 
 uniform highp isampler2D f_t;
 void main() {
-  ivec2 v = ivec2(uvec2(1u, 2u));
-  ivec4 x = texelFetch(f_t, v, int(3u));
+  ivec4 x = texelFetch(f_t, ivec2(1, 2), 3);
 }
 )");
 }
@@ -1283,7 +1301,7 @@ precision highp int;
 
 uniform highp sampler3D f_t;
 void main() {
-  vec4 x = texelFetch(f_t, ivec3(1, 2, 3), int(4u));
+  vec4 x = texelFetch(f_t, ivec3(1, 2, 3), 4);
 }
 )");
 }
@@ -1428,7 +1446,7 @@ precision highp int;
 
 layout(binding = 0, rgba32f) uniform highp writeonly image2DArray f_v;
 void main() {
-  imageStore(f_v, ivec3(ivec2(1, 2), int(3u)), vec4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f));
+  imageStore(f_v, ivec3(1, 2, 3), vec4(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f));
 }
 )");
 }
@@ -1436,11 +1454,11 @@ void main() {
 TEST_F(GlslWriterTest, BuiltinFMA_f32) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* x = b.Splat(ty.vec3f(), 1_f);
-        auto* y = b.Splat(ty.vec3f(), 2_f);
-        auto* z = b.Splat(ty.vec3f(), 3_f);
+        auto* x = b.Let("x", b.Splat(ty.vec3f(), 1_f));
+        auto* y = b.Let("y", b.Splat(ty.vec3f(), 2_f));
+        auto* z = b.Let("z", b.Splat(ty.vec3f(), 3_f));
 
-        b.Let("x", b.Call(ty.vec3f(), core::BuiltinFn::kFma, x, y, z));
+        b.Let("res", b.Call(ty.vec3f(), core::BuiltinFn::kFma, x, y, z));
         b.Return(func);
     });
 
@@ -1450,7 +1468,10 @@ TEST_F(GlslWriterTest, BuiltinFMA_f32) {
 precision highp int;
 
 void main() {
-  vec3 x = ((vec3(1.0f) * vec3(2.0f)) + vec3(3.0f));
+  vec3 x = vec3(1.0f);
+  vec3 y = vec3(2.0f);
+  vec3 z = vec3(3.0f);
+  vec3 res = ((x * y) + z);
 }
 )");
 }
@@ -1473,7 +1494,7 @@ precision highp int;
 #extension GL_AMD_gpu_shader_half_float: require
 
 void main() {
-  f16vec3 x = ((f16vec3(1.0hf) * f16vec3(2.0hf)) + f16vec3(3.0hf));
+  f16vec3 x = f16vec3(5.0hf);
 }
 )");
 }
@@ -1943,8 +1964,7 @@ precision highp int;
 
 uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 2.5f);
-  vec4 x = textureGather(f_t_s, vec4(v, float(6u)), 3.0f);
+  vec4 x = textureGather(f_t_s, vec4(1.0f, 2.0f, 2.5f, 6.0f), 3.0f);
 }
 )");
 }
@@ -1985,7 +2005,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec4 x = textureGatherOffset(f_t_s, vec3(vec2(1.0f, 2.0f), float(6)), 3.0f, ivec2(4, 5));
+  vec4 x = textureGatherOffset(f_t_s, vec3(1.0f, 2.0f, 6.0f), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -2022,8 +2042,7 @@ precision highp int;
 
 uniform highp isampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  ivec4 x = textureGather(f_t_s, v, int(3u));
+  ivec4 x = textureGather(f_t_s, vec2(1.0f, 2.0f), 3);
 }
 )");
 }
@@ -2060,8 +2079,7 @@ precision highp int;
 
 uniform highp isampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  ivec4 x = textureGatherOffset(f_t_s, v, ivec2(1, 3), int(0u));
+  ivec4 x = textureGatherOffset(f_t_s, vec2(1.0f, 2.0f), ivec2(1, 3), 0);
 }
 )");
 }
@@ -2099,9 +2117,7 @@ precision highp int;
 
 uniform highp isampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec3 v_1 = vec3(v, float(1u));
-  ivec4 x = textureGather(f_t_s, v_1, int(1u));
+  ivec4 x = textureGather(f_t_s, vec3(1.0f, 2.0f, 1.0f), 1);
 }
 )");
 }
@@ -2141,9 +2157,7 @@ precision highp int;
 
 uniform highp isampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec3 v_1 = vec3(v, float(1));
-  ivec4 x = textureGatherOffset(f_t_s, v_1, ivec2(1, 2), int(2u));
+  ivec4 x = textureGatherOffset(f_t_s, vec3(1.0f, 2.0f, 1.0f), ivec2(1, 2), 2);
 }
 )");
 }
@@ -2254,8 +2268,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureGather(f_t_s, vec3(v, float(4)), 0.0f);
+  vec4 x = textureGather(f_t_s, vec3(1.0f, 2.0f, 4.0f), 0.0f);
 }
 )");
 }
@@ -2294,8 +2307,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureGatherOffset(f_t_s, vec3(v, float(4u)), 0.0f, ivec2(4, 5));
+  vec4 x = textureGatherOffset(f_t_s, vec3(1.0f, 2.0f, 4.0f), 0.0f, ivec2(4, 5));
 }
 )");
 }
@@ -2433,8 +2445,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = texture(f_t_s, vec3(v, float(4u)));
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 4.0f));
 }
 )");
 }
@@ -2471,8 +2482,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureOffset(f_t_s, vec3(v, float(4u)), ivec2(4, 5));
+  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 4.0f), ivec2(4, 5));
 }
 )");
 }
@@ -2614,8 +2624,7 @@ precision highp int;
 
 uniform highp samplerCubeArray f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = texture(f_t_s, vec4(v, float(4u)));
+  vec4 x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f));
 }
 )");
 }
@@ -2649,7 +2658,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 0.0f));
+  float x = texture(f_t_s, vec3(1.0f, 2.0f, 0.0f));
 }
 )");
 }
@@ -2684,7 +2693,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 0.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 0.0f), ivec2(4, 5));
 }
 )");
 }
@@ -2719,8 +2728,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(f_t_s, vec4(v, float(4u), 0.0f));
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 4.0f, 0.0f));
 }
 )");
 }
@@ -2749,17 +2757,15 @@ TEST_F(GlslWriterTest, BuiltinTextureSample_Depth2d_Array_Offset) {
         b.Return(func);
     });
 
-    auto result = Generate({}, core::ir::Function::PipelineStage::kFragment);
+    auto result = Generate();
     ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 v_1 = vec4(v, float(4u), 0.0f);
-  vec2 v_2 = dFdx(v);
-  float x = textureGradOffset(f_t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
+  vec2 v = dFdx(vec2(1.0f, 2.0f));
+  float x = textureGradOffset(f_t_s, vec4(1.0f, 2.0f, 4.0f, 0.0f), v, dFdy(vec2(1.0f, 2.0f)), ivec2(4, 5));
 }
 )");
 }
@@ -2798,8 +2804,7 @@ precision highp int;
 
 uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(f_t_s, vec4(v, float(4u)), 0.0f);
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), 0.0f);
 }
 )");
 }
@@ -2822,7 +2827,8 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
@@ -2833,7 +2839,8 @@ precision highp int;
 
 uniform highp sampler2D f_t_s;
 void main() {
-  vec4 x = texture(f_t_s, vec2(1.0f, 2.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = texture(f_t_s, vec2(1.0f, 2.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2857,8 +2864,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f, offset));
+              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias, offset));
         b.Return(func);
     });
 
@@ -2869,7 +2877,8 @@ precision highp int;
 
 uniform highp sampler2D f_t_s;
 void main() {
-  vec4 x = textureOffset(f_t_s, vec2(1.0f, 2.0f), ivec2(4, 5), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = textureOffset(f_t_s, vec2(1.0f, 2.0f), ivec2(4, 5), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2893,8 +2902,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
+                                     bias));
         b.Return(func);
     });
 
@@ -2905,8 +2915,8 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = texture(f_t_s, vec3(v, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 4.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2931,8 +2941,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_2d_Array_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
-                                     3_f, offset));
+                                     bias, offset));
         b.Return(func);
     });
 
@@ -2943,8 +2954,8 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureOffset(f_t_s, vec3(v, float(4u)), ivec2(4, 5), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 4.0f), ivec2(4, 5), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -2967,7 +2978,8 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
@@ -2978,7 +2990,8 @@ precision highp int;
 
 uniform highp sampler3D f_t_s;
 void main() {
-  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -3002,8 +3015,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_3d_Offset) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
+        auto* bias = b.Let("b", 3_f);
         b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f, offset));
+              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias, offset));
         b.Return(func);
     });
 
@@ -3014,7 +3028,8 @@ precision highp int;
 
 uniform highp sampler3D f_t_s;
 void main() {
-  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec3(4, 5, 6), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec3(4, 5, 6), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -3037,7 +3052,8 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, bias));
         b.Return(func);
     });
 
@@ -3048,7 +3064,8 @@ precision highp int;
 
 uniform highp samplerCube f_t_s;
 void main() {
-  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -3072,8 +3089,9 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleBias_Cube_Array) {
 
         auto* t = b.Load(tex);
         auto* s = b.Load(sampler);
-        b.Let("x",
-              b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx, 3_f));
+        auto* bias = b.Let("b", 3_f);
+        b.Let("x", b.Call<vec4<f32>>(core::BuiltinFn::kTextureSampleBias, t, s, coords, array_idx,
+                                     bias));
         b.Return(func);
     });
 
@@ -3088,8 +3106,8 @@ precision highp int;
 
 uniform highp samplerCubeArray f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = texture(f_t_s, vec4(v, float(4u)), clamp(3.0f, -16.0f, 15.9899997711181640625f));
+  float b = 3.0f;
+  vec4 x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), clamp(b, -16.0f, 15.9899997711181640625f));
 }
 )");
 }
@@ -3195,8 +3213,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureLod(f_t_s, vec3(v, float(4u)), 3.0f);
+  vec4 x = textureLod(f_t_s, vec3(1.0f, 2.0f, 4.0f), 3.0f);
 }
 )");
 }
@@ -3233,8 +3250,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 x = textureLodOffset(f_t_s, vec3(v, float(4u)), 3.0f, ivec2(4, 5));
+  vec4 x = textureLodOffset(f_t_s, vec3(1.0f, 2.0f, 4.0f), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -3378,8 +3394,7 @@ precision highp int;
 
 uniform highp samplerCubeArray f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 x = textureLod(f_t_s, vec4(v, float(4u)), 3.0f);
+  vec4 x = textureLod(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
 }
 )");
 }
@@ -3413,8 +3428,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  vec3 v = vec3(vec2(1.0f, 2.0f), 0.0f);
-  float x = textureLod(f_t_s, v, float(3));
+  float x = textureLod(f_t_s, vec3(1.0f, 2.0f, 0.0f), 3.0f);
 }
 )");
 }
@@ -3449,8 +3463,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  vec3 v = vec3(vec2(1.0f, 2.0f), 0.0f);
-  float x = textureLodOffset(f_t_s, v, float(3), ivec2(4, 5));
+  float x = textureLodOffset(f_t_s, vec3(1.0f, 2.0f, 0.0f), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -3490,9 +3503,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 v_1 = vec4(v, float(4u), 0.0f);
-  float x = textureLod(f_t_s, v_1, float(3u));
+  float x = textureLod(f_t_s, vec4(1.0f, 2.0f, 4.0f, 0.0f), 3.0f);
 }
 )");
 }
@@ -3530,9 +3541,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 v_1 = vec4(v, float(4u), 0.0f);
-  float x = textureLodOffset(f_t_s, v_1, float(3), ivec2(4, 5));
+  float x = textureLodOffset(f_t_s, vec4(1.0f, 2.0f, 4.0f, 0.0f), 3.0f, ivec2(4, 5));
 }
 )");
 }
@@ -3572,9 +3581,7 @@ precision highp int;
 
 uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec4 v_1 = vec4(v, float(4u));
-  float x = textureLod(f_t_s, v_1, 0.0f, float(3u));
+  float x = textureLod(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), 0.0f, 3.0f);
 }
 )");
 }
@@ -3610,9 +3617,7 @@ precision highp int;
 
 uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec2 v_1 = vec2(3.0f, 4.0f);
-  vec4 x = textureGrad(f_t_s, v, v_1, vec2(5.0f, 6.0f));
+  vec4 x = textureGrad(f_t_s, vec2(1.0f, 2.0f), vec2(3.0f, 4.0f), vec2(5.0f, 6.0f));
 }
 )");
 }
@@ -3650,9 +3655,7 @@ precision highp int;
 
 uniform highp sampler2D f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec2 v_1 = vec2(3.0f, 4.0f);
-  vec4 x = textureGradOffset(f_t_s, v, v_1, vec2(5.0f, 6.0f), ivec2(4, 5));
+  vec4 x = textureGradOffset(f_t_s, vec2(1.0f, 2.0f), vec2(3.0f, 4.0f), vec2(5.0f, 6.0f), ivec2(4, 5));
 }
 )");
 }
@@ -3690,10 +3693,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec2 v_1 = vec2(3.0f, 4.0f);
-  vec2 v_2 = vec2(5.0f, 6.0f);
-  vec4 x = textureGrad(f_t_s, vec3(v, float(4u)), v_1, v_2);
+  vec4 x = textureGrad(f_t_s, vec3(1.0f, 2.0f, 4.0f), vec2(3.0f, 4.0f), vec2(5.0f, 6.0f));
 }
 )");
 }
@@ -3732,10 +3732,7 @@ precision highp int;
 
 uniform highp sampler2DArray f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec2 v_1 = vec2(3.0f, 4.0f);
-  vec2 v_2 = vec2(5.0f, 6.0f);
-  vec4 x = textureGradOffset(f_t_s, vec3(v, float(4u)), v_1, v_2, ivec2(4, 5));
+  vec4 x = textureGradOffset(f_t_s, vec3(1.0f, 2.0f, 4.0f), vec2(3.0f, 4.0f), vec2(5.0f, 6.0f), ivec2(4, 5));
 }
 )");
 }
@@ -3771,9 +3768,7 @@ precision highp int;
 
 uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGrad(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
+  vec4 x = textureGrad(f_t_s, vec3(1.0f, 2.0f, 3.0f), vec3(3.0f, 4.0f, 5.0f), vec3(6.0f, 7.0f, 8.0f));
 }
 )");
 }
@@ -3811,9 +3806,7 @@ precision highp int;
 
 uniform highp sampler3D f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGradOffset(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f), ivec3(4, 5, 6));
+  vec4 x = textureGradOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), vec3(3.0f, 4.0f, 5.0f), vec3(6.0f, 7.0f, 8.0f), ivec3(4, 5, 6));
 }
 )");
 }
@@ -3849,9 +3842,7 @@ precision highp int;
 
 uniform highp samplerCube f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec4 x = textureGrad(f_t_s, v, v_1, vec3(6.0f, 7.0f, 8.0f));
+  vec4 x = textureGrad(f_t_s, vec3(1.0f, 2.0f, 3.0f), vec3(3.0f, 4.0f, 5.0f), vec3(6.0f, 7.0f, 8.0f));
 }
 )");
 }
@@ -3893,10 +3884,7 @@ precision highp int;
 
 uniform highp samplerCubeArray f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  vec3 v_1 = vec3(3.0f, 4.0f, 5.0f);
-  vec3 v_2 = vec3(6.0f, 7.0f, 8.0f);
-  vec4 x = textureGrad(f_t_s, vec4(v, float(4u)), v_1, v_2);
+  vec4 x = textureGrad(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), vec3(3.0f, 4.0f, 5.0f), vec3(6.0f, 7.0f, 8.0f));
 }
 )");
 }
@@ -3930,7 +3918,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
+  float x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f));
 }
 )");
 }
@@ -3965,7 +3953,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec2(4, 5));
 }
 )");
 }
@@ -4001,8 +3989,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(f_t_s, vec4(v, float(4u), 3.0f));
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 4.0f, 3.0f));
 }
 )");
 }
@@ -4032,17 +4019,15 @@ TEST_F(GlslWriterTest, BuiltinTextureSampleCompare_2d_Array_Offset) {
         b.Return(func);
     });
 
-    auto result = Generate({}, core::ir::Function::PipelineStage::kFragment);
+    auto result = Generate();
     ASSERT_EQ(result, Success) << result.Failure().reason << output_.glsl;
     EXPECT_EQ(output_.glsl, GlslHeader() + R"(precision highp float;
 precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  vec4 v_1 = vec4(v, float(4u), 3.0f);
-  vec2 v_2 = dFdx(v);
-  float x = textureGradOffset(f_t_s, v_1, v_2, dFdy(v), ivec2(4, 5));
+  vec2 v = dFdx(vec2(1.0f, 2.0f));
+  float x = textureGradOffset(f_t_s, vec4(1.0f, 2.0f, 4.0f, 3.0f), v, dFdy(vec2(1.0f, 2.0f)), ivec2(4, 5));
 }
 )");
 }
@@ -4076,7 +4061,7 @@ precision highp int;
 
 uniform highp samplerCubeShadow f_t_s;
 void main() {
-  float x = texture(f_t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 3.0f));
 }
 )");
 }
@@ -4116,8 +4101,7 @@ precision highp int;
 
 uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(f_t_s, vec4(v, float(4u)), 3.0f);
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
 }
 )");
 }
@@ -4151,7 +4135,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = texture(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f));
+  float x = texture(f_t_s, vec3(1.0f, 2.0f, 3.0f));
 }
 )");
 }
@@ -4187,7 +4171,7 @@ precision highp int;
 
 uniform highp sampler2DShadow f_t_s;
 void main() {
-  float x = textureOffset(f_t_s, vec3(vec2(1.0f, 2.0f), 3.0f), ivec2(4, 5));
+  float x = textureOffset(f_t_s, vec3(1.0f, 2.0f, 3.0f), ivec2(4, 5));
 }
 )");
 }
@@ -4223,8 +4207,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  float x = texture(f_t_s, vec4(v, float(4u), 3.0f));
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 4.0f, 3.0f));
 }
 )");
 }
@@ -4265,8 +4248,7 @@ precision highp int;
 
 uniform highp sampler2DArrayShadow f_t_s;
 void main() {
-  vec2 v = vec2(1.0f, 2.0f);
-  float x = textureGradOffset(f_t_s, vec4(v, float(4u), 3.0f), vec2(0.0f), vec2(0.0f), ivec2(4, 5));
+  float x = textureGradOffset(f_t_s, vec4(1.0f, 2.0f, 4.0f, 3.0f), vec2(0.0f), vec2(0.0f), ivec2(4, 5));
 }
 )");
 }
@@ -4300,7 +4282,7 @@ precision highp int;
 
 uniform highp samplerCubeShadow f_t_s;
 void main() {
-  float x = texture(f_t_s, vec4(vec3(1.0f, 2.0f, 3.0f), 3.0f));
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 3.0f));
 }
 )");
 }
@@ -4340,8 +4322,140 @@ precision highp int;
 
 uniform highp samplerCubeArrayShadow f_t_s;
 void main() {
-  vec3 v = vec3(1.0f, 2.0f, 3.0f);
-  float x = texture(f_t_s, vec4(v, float(4u)), 3.0f);
+  float x = texture(f_t_s, vec4(1.0f, 2.0f, 3.0f, 4.0f), 3.0f);
+}
+)");
+}
+
+TEST_F(GlslWriterTest, AddSat) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kAddSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+    auto* ep = b.ComputeFunction("main");
+    b.Append(ep->Block(), [&] {
+        b.Call(ty.void_(), foo, 0_u, 1_u);
+        b.Return(ep);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.glsl;
+    EXPECT_EQ(output_.glsl, GlslHeader() + R"(
+void foo(uint a, uint b) {
+  uint v = 0u;
+  uint v_1 = uaddCarry(a, b, v);
+  uint res = mix(4294967295u, v_1, (v == 0u));
+}
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  foo(0u, 1u);
+}
+)");
+}
+TEST_F(GlslWriterTest, AddSat_SideEffects) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* out = b.Var<function, u32>();
+        auto* call =
+            b.Call<glsl::ir::BuiltinCall>(ty.u32(), glsl::BuiltinFn::kUaddCarry, lhs, rhs, out);
+        b.Let("load_out_after_call", b.Load(out));
+        b.Let("res", call);
+        b.Return(foo);
+    });
+    auto* ep = b.ComputeFunction("main");
+    b.Append(ep->Block(), [&] {
+        b.Call(ty.void_(), foo, 0_u, 1_u);
+        b.Return(ep);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.glsl;
+    EXPECT_EQ(output_.glsl, GlslHeader() + R"(
+void foo(uint a, uint b) {
+  uint v = 0u;
+  uint v_1 = uaddCarry(a, b, v);
+  uint load_out_after_call = v;
+  uint res = v_1;
+}
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  foo(0u, 1u);
+}
+)");
+}
+
+TEST_F(GlslWriterTest, MulSat) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kMulSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+    auto* ep = b.ComputeFunction("main");
+    b.Append(ep->Block(), [&] {
+        b.Call(ty.void_(), foo, 0_u, 1_u);
+        b.Return(ep);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.glsl;
+    EXPECT_EQ(output_.glsl, GlslHeader() + R"(
+void foo(uint a, uint b) {
+  uint v = 0u;
+  uint v_1 = 0u;
+  umulExtended(a, b, v, v_1);
+  uint res = mix(4294967295u, v_1, (v == 0u));
+}
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  foo(0u, 1u);
+}
+)");
+}
+TEST_F(GlslWriterTest, MulSat_SideEffects) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* upper = b.Var<function, u32>();
+        auto* lower = b.Var<function, u32>();
+        b.Call<glsl::ir::BuiltinCall>(ty.void_(), glsl::BuiltinFn::kUmulExtended, lhs, rhs, upper,
+                                      lower);
+        b.Let("load_upper_after_call", b.Load(upper));
+        b.Let("load_lower_after_call", b.Load(lower));
+        b.Return(foo);
+    });
+    auto* ep = b.ComputeFunction("main");
+    b.Append(ep->Block(), [&] {
+        b.Call(ty.void_(), foo, 0_u, 1_u);
+        b.Return(ep);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_.glsl;
+    EXPECT_EQ(output_.glsl, GlslHeader() + R"(
+void foo(uint a, uint b) {
+  uint v = 0u;
+  uint v_1 = 0u;
+  umulExtended(a, b, v, v_1);
+  uint load_upper_after_call = v;
+  uint load_lower_after_call = v_1;
+}
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+void main() {
+  foo(0u, 1u);
 }
 )");
 }

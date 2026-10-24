@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 namespace tint::spirv::reader::lower {
 
@@ -105,11 +105,13 @@ struct State {
 
             auto* ptr = object->Type()->As<core::type::Pointer>();
             auto addrspace = ptr->AddressSpace();
-            auto* access_to_vec =
-                b.Access(ty.ptr(addrspace, access.type, ptr->Access()), object, partial_indices);
-            access_to_vec->InsertBefore(access.inst);
+            core::ir::Value* access_to_vec = nullptr;
+            b.InsertBefore(access.inst, [&] {
+                access_to_vec = b.Access(ty.ptr(addrspace, access.type, ptr->Access()), object,
+                                         partial_indices);
+            });
 
-            object = access_to_vec->Result();
+            object = access_to_vec;
         }
 
         // Replace all uses of the original access instruction.
@@ -154,21 +156,11 @@ struct State {
 }  // namespace
 
 Result<SuccessType> VectorElementPointer(core::ir::Module& ir) {
-    core::ir::AssertValid(ir,
-                          core::ir::Capabilities{
-                              core::ir::Capability::kAllowMultipleEntryPoints,
-                              core::ir::Capability::kAllowOverrides,
-                              core::ir::Capability::kAllowVectorElementPointer,
-                              core::ir::Capability::kAllowPhonyInstructions,
-                              core::ir::Capability::kAllowNonCoreTypes,
-                              core::ir::Capability::kAllowStructMatrixDecorations,
-                              core::ir::Capability::kAllowLocationForNumericElements,
-                              core::ir::Capability::kAllowPointerToHandle,
-                              core::ir::Capability::kLoosenValidationForShaderIO,
-                          },
-                          "before spirv.VectorElementPointer");
+    core::ir::AssertValid(ir, "before spirv.VectorElementPointer");
 
     State{ir}.Process();
+
+    ir.properties.Remove(core::ir::Property::kAllowVectorElementPointer);
 
     return Success;
 }

@@ -25,13 +25,15 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
-#include "dawn/common/ExternalTextureParams.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/Enumerator.h"
+#include "src/dawn/common/ExternalTextureParams.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -72,11 +74,11 @@ static const YUVTestData kGreen = {
 static const YUVTestData kBlue = {
     0.0722, 1.0, 0.4937, {0.0, 0.0, 1.0, 1.0}, utils::RGBA8::kBlue,
 };
-static const YUVTestData kColor1 = {0.6402,
-                                    0.3214,
-                                    0.6624,
-                                    {246 / 255.0, 169 / 255.0, 89 / 255.0, 1},
-                                    {246, 169, 89, 255}};
+static const YUVTestData kColor1 = {163 / 255.0,
+                                    82 / 255.0,
+                                    168 / 255.0,
+                                    {244 / 255.0, 169 / 255.0, 89 / 255.0, 1},
+                                    {244, 169, 89, 255}};
 
 template <typename Parent>
 class ExternalTextureTestsBase : public Parent {
@@ -138,10 +140,10 @@ class ExternalTextureTestsBase : public Parent {
     // corner as well as an optional color for the outside of the quad. (the quad can be scaled
     // to make it fill only parts of the texture).
     struct QuadData {
-        std::array<float, 4> upperLeft;
-        std::array<float, 4> upperRight;
-        std::array<float, 4> lowerLeft;
-        std::array<float, 4> lowerRight;
+        std::array<float, 4> upperLeft{};
+        std::array<float, 4> upperRight{};
+        std::array<float, 4> lowerLeft{};
+        std::array<float, 4> lowerRight{};
         std::array<float, 4> outsideData = {};
         float scale = 1.0;
         std::array<float, 3> padding = {};
@@ -246,6 +248,74 @@ class ExternalTextureTestsBase : public Parent {
         return texture;
     }
 
+    void CheckColorSpaceConversion(wgpu::ColorSpaceDawn srcColorSpace,
+                                   wgpu::PredefinedColorSpace dstColorSpace,
+                                   wgpu::Color srcColor,
+                                   std::array<float, 3> expectedColor) {
+        // Create the external texture from the color spaces and srcColor.
+        wgpu::Texture srcTexture =
+            MakeTestTexture(wgpu::TextureFormat::RGBA16Float, 1, 1, srcColor);
+
+        ExternalTextureColorSpaceParams colorSpaceParams;
+        wgpu::Status status =
+            ComputeExternalTextureParams(srcColorSpace, dstColorSpace, &colorSpaceParams);
+        DAWN_ASSERT(status == wgpu::Status::Success);
+
+        wgpu::ExternalTextureDescriptor etDesc;
+        etDesc.plane0 = srcTexture.CreateView();
+        etDesc.yuvToRgbConversionMatrix = colorSpaceParams.yuvToRgbConversionMatrix.data();
+        etDesc.gamutConversionMatrix = colorSpaceParams.gamutConversionMatrix.data();
+        etDesc.srcTransferFunctionParameters = colorSpaceParams.srcTransferFunction.data();
+        etDesc.dstTransferFunctionParameters = colorSpaceParams.dstTransferFunction.data();
+        etDesc.cropOrigin = {0, 0};
+        etDesc.cropSize = {srcTexture.GetWidth(), srcTexture.GetHeight()};
+        etDesc.apparentSize = {srcTexture.GetWidth(), srcTexture.GetHeight()};
+        wgpu::ExternalTexture externalTexture = this->device.CreateExternalTexture(&etDesc);
+
+        // Create the test pipeline that will just load the single texel of the ExternalTexture.
+        wgpu::ComputePipelineDescriptor csDesc;
+        csDesc.compute.module = utils::CreateShaderModule(this->device, R"(
+            @group(0) @binding(0) var t : texture_external;
+            @group(0) @binding(1) var<storage, read_write> results : vec4f;
+
+            @compute @workgroup_size(1) fn main() {
+                results = textureLoad(t, vec2(0));
+            }
+        )");
+        wgpu::ComputePipeline pipeline = this->device.CreateComputePipeline(&csDesc);
+
+        // Run the pipeline and store results in a buffer.
+        wgpu::BufferDescriptor resultDesc = {
+            .usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc,
+            .size = sizeof(uint32_t) + 256,
+        };
+        wgpu::Buffer resultBuffer = this->device.CreateBuffer(&resultDesc);
+
+        wgpu::BindGroup bindGroup =
+            utils::MakeBindGroup(this->device, pipeline.GetBindGroupLayout(0),
+                                 {{0, externalTexture}, {1, resultBuffer}});
+
+        wgpu::CommandEncoder encoder = this->device.CreateCommandEncoder();
+        wgpu::ComputePassEncoder pass = encoder.BeginComputePass();
+        pass.SetBindGroup(0, bindGroup);
+        pass.SetPipeline(pipeline);
+        pass.DispatchWorkgroups(1);
+        pass.End();
+
+        wgpu::CommandBuffer commands = encoder.Finish();
+        this->queue.Submit(1, &commands);
+
+        // Check that we got the expected values. Make the tolerance 1% of the maximum expected
+        // value as some of them can get somewhat large. (so a hardcoded .01 is too small).
+        float tolerance = 0;
+        for (auto [_, value] : Enumerate(expectedColor)) {
+            tolerance = std::max(tolerance, std::abs(value) * 0.01f);
+        }
+
+        EXPECT_BUFFER_FLOAT_RANGE_TOLERANCE_EQ(expectedColor.data(), resultBuffer, 0, 3, tolerance);
+        EXPECT_BUFFER_FLOAT_EQ(1.0, resultBuffer, 12);
+    }
+
     static constexpr uint32_t kWidth = 4;
     static constexpr uint32_t kHeight = 4;
     static constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::RGBA8Unorm;
@@ -287,6 +357,9 @@ TEST_P(ExternalTextureTests, CreateExternalTextureSuccess) {
 TEST_P(ExternalTextureTests, SampleExternalTexture) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
     wgpu::Texture sampledTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
@@ -343,8 +416,74 @@ TEST_P(ExternalTextureTests, SampleExternalTexture) {
     EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8::kGreen, renderTexture, 0, 0);
 }
 
+// Test that single-plane external textures bypass YUV-to-RGB conversion, even when a
+// non-identity yuvToRgbConversionMatrix is set (e.g. Android AHB imports) and static
+// samplers are forced on Vulkan.
+TEST_P(ExternalTextureTests, SampleSinglePlaneWithYuvToRgbMatrix) {
+    // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
+    DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
+    wgpu::Texture sampledTexture =
+        Create2DTexture(device, kWidth, kHeight, kFormat,
+                        wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
+    wgpu::Texture renderTexture =
+        Create2DTexture(device, kWidth, kHeight, kFormat,
+                        wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::RenderAttachment);
+
+    // Initialize with red
+    {
+        utils::ComboRenderPassDescriptor renderPass({sampledTexture.CreateView()}, nullptr);
+        renderPass.cColorAttachments[0].clearValue = {1.0f, 0.0f, 0.0f, 1.0f};
+        wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+        wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass);
+        pass.End();
+
+        wgpu::CommandBuffer commands = encoder.Finish();
+        queue.Submit(1, &commands);
+    }
+
+    // Pipeline Creation
+    utils::ComboRenderPipelineDescriptor descriptor;
+    descriptor.vertex.module = vsModule;
+    descriptor.cFragment.module = fsSampleExternalTextureModule;
+    descriptor.cTargets[0].format = kFormat;
+    wgpu::RenderPipeline pipeline = device.CreateRenderPipeline(&descriptor);
+
+    // Set a non-identity BT.709 conversion matrix on an RGBA external texture.
+    wgpu::ExternalTextureDescriptor externalDesc = InitExternalTextureDescriptor(sampledTexture);
+    externalDesc.yuvToRgbConversionMatrix = bt709ColorSpaceParams.yuvToRgbConversionMatrix.data();
+    wgpu::ExternalTexture externalTexture = device.CreateExternalTexture(&externalDesc);
+
+    wgpu::Sampler sampler = device.CreateSampler();
+    wgpu::BindGroup bindGroup = utils::MakeBindGroup(device, pipeline.GetBindGroupLayout(0),
+                                                     {{0, sampler}, {1, externalTexture}});
+
+    wgpu::TextureView renderView = renderTexture.CreateView();
+    utils::ComboRenderPassDescriptor renderPass({renderView});
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
+    wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass);
+    {
+        pass.SetPipeline(pipeline);
+        pass.SetBindGroup(0, bindGroup);
+        pass.Draw(3);
+        pass.End();
+    }
+
+    wgpu::CommandBuffer commands = encoder.Finish();
+    queue.Submit(1, &commands);
+
+    // Output must stay red; YUV-to-RGB conversion must be skipped for single-plane textures.
+    EXPECT_PIXEL_RGBA8_EQ(utils::RGBA8::kRed, renderTexture, 0, 0);
+}
+
 // Tests that a texture view can be used for an externalTexture binding.
 TEST_P(ExternalTextureTests, SampleTextureView) {
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sampledTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -401,7 +540,8 @@ TEST_P(ExternalTextureTests, SampleTextureView) {
 // Tests that textureDimensions WGSL built-in function works when a texture view is used for an
 // externalTexture binding.
 TEST_P(ExternalTextureTests, TextureDimensionsWithTextureView) {
-    DAWN_SUPPRESS_TEST_IF(IsWARP());  // Flaky on WARP
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && (IsVulkan() || IsOpenGLES()));
 
     wgpu::TextureDescriptor descriptor;
     descriptor.size = {kWidth, kHeight, 1};
@@ -511,6 +651,9 @@ TEST_P(ExternalTextureTests, SampleExternalTextureDifferingGroup) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sampledTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -584,6 +727,12 @@ TEST_P(ExternalTextureTests, SampleMultiplanarExternalTexture) {
 
     // TODO(https://crbug.com/468988322): Fails because of precision issues on Mac AMD.
     DAWN_SUPPRESS_TEST_IF(IsMetal() && IsAMD());
+
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
+    // Fails on Xclipse GPUs.
+    DAWN_SUPPRESS_TEST_IF(IsSamsung());
 
     wgpu::Texture sampledTexturePlane0 =
         Create2DTexture(device, kWidth, kHeight, wgpu::TextureFormat::R8Unorm,
@@ -660,6 +809,9 @@ TEST_P(ExternalTextureTests, SampleMultiplanarExternalTextureNorm16) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sampledTexturePlane0 =
         Create2DTexture(device, kWidth, kHeight, wgpu::TextureFormat::R16Unorm,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -735,6 +887,9 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipSampleSinglePlane) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sourceTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -787,8 +942,8 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipSampleSinglePlane) {
     }
 
     struct RotationExpectation {
-        wgpu::ExternalTextureRotation rotation;
-        bool mirrored;
+        wgpu::ExternalTextureRotation rotation{};
+        bool mirrored = false;
         utils::RGBA8 upperLeftColor;
         utils::RGBA8 upperRightColor;
         utils::RGBA8 lowerLeftColor;
@@ -867,6 +1022,9 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipTextureLoadSinglePlaneNotSquare) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sourceTexture =
         Create2DTexture(device, 2, 16, kFormat,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -880,8 +1038,8 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipTextureLoadSinglePlaneNotSquare) {
                         wgpu::TextureUsage::CopySrc | wgpu::TextureUsage::RenderAttachment);
 
     struct RotationExpectation {
-        wgpu::ExternalTextureRotation rotation;
-        bool mirrored;
+        wgpu::ExternalTextureRotation rotation = wgpu::ExternalTextureRotation::Rotate0Degrees;
+        bool mirrored = false;
         utils::RGBA8 upperLeftColor;
         utils::RGBA8 upperRightColor;
         utils::RGBA8 lowerLeftColor;
@@ -990,6 +1148,9 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipSampleMultiplanar) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sourceTexturePlane0 =
         Create2DTexture(device, kWidth, kHeight, wgpu::TextureFormat::R8Unorm,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -1049,8 +1210,8 @@ TEST_P(ExternalTextureTests, RotateAndOrFlipSampleMultiplanar) {
     }
 
     struct RotationExpectation {
-        wgpu::ExternalTextureRotation rotation;
-        bool mirrored;
+        wgpu::ExternalTextureRotation rotation = wgpu::ExternalTextureRotation::Rotate0Degrees;
+        bool mirrored = false;
         utils::RGBA8 upperLeftColor;
         utils::RGBA8 upperRightColor;
         utils::RGBA8 lowerLeftColor;
@@ -1129,6 +1290,9 @@ TEST_P(ExternalTextureTests, CropSinglePlane) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::Texture sourceTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -1141,8 +1305,8 @@ TEST_P(ExternalTextureTests, CropSinglePlane) {
 
     struct CropExpectation {
         wgpu::Origin2D cropOrigin;
-        wgpu::Extent2D cropSize;
-        wgpu::ExternalTextureRotation rotation;
+        wgpu::Extent2D cropSize{};
+        wgpu::ExternalTextureRotation rotation = wgpu::ExternalTextureRotation::Rotate0Degrees;
         utils::RGBA8 upperLeftColor;
         utils::RGBA8 upperRightColor;
         utils::RGBA8 lowerLeftColor;
@@ -1262,6 +1426,9 @@ TEST_P(ExternalTextureTests, CropSinglePlane) {
 
 // Test that the apparentSize takes effect by using it to scale a texture and "blitting" it.
 TEST_P(ExternalTextureTests, ApparentSizeEffect) {
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     // Create the test pipeline
     wgpu::ShaderModule blitAndOutputSize = utils::CreateShaderModule(this->device, R"(
         @group(0) @binding(0) var t : texture_external;
@@ -1358,6 +1525,12 @@ TEST_P(ExternalTextureTests, CropMultiplanar) {
     // TODO(https://crbug.com/468988322): Fails because of precision issues on Mac AMD.
     DAWN_SUPPRESS_TEST_IF(IsMetal() && IsAMD());
 
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
+    // Fails on Xclipse GPUs.
+    DAWN_SUPPRESS_TEST_IF(IsSamsung());
+
     wgpu::Texture sourceTexturePlane0 =
         Create2DTexture(device, kWidth, kHeight, wgpu::TextureFormat::R8Unorm,
                         wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment);
@@ -1379,8 +1552,8 @@ TEST_P(ExternalTextureTests, CropMultiplanar) {
 
     struct CropExpectation {
         wgpu::Origin2D cropOrigin;
-        wgpu::Extent2D cropSize;
-        wgpu::ExternalTextureRotation rotation;
+        wgpu::Extent2D cropSize{};
+        wgpu::ExternalTextureRotation rotation = wgpu::ExternalTextureRotation::Rotate0Degrees;
         utils::RGBA8 upperLeftColor;
         utils::RGBA8 upperRightColor;
         utils::RGBA8 lowerLeftColor;
@@ -1502,6 +1675,9 @@ TEST_P(ExternalTextureTests, CropMultiplanar) {
 TEST_P(ExternalTextureTests, SampleExternalTextureAlpha) {
     // TODO(crbug.com/dawn/2295): diagnose this failure on Pixel 4 OpenGLES
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm());
+
+    // TODO(crbug.com/522868202): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
     wgpu::Texture sampledTexture =
         Create2DTexture(device, kWidth, kHeight, kFormat,
@@ -1640,8 +1816,6 @@ TEST_P(ExternalTextureTests, MultipleBindings) {
 //
 // Case with all in the same bindgroup layout.
 TEST_P(ExternalTextureTests, SampleDifferentKindsSameBindGroup) {
-    DAWN_SUPPRESS_TEST_IF(IsWARP());
-
     // Create our three test external of different kinds as well as the expected data.
     std::vector<wgpu::ExternalTexture> externalTextures;
     std::vector<utils::RGBA8> colors;
@@ -1715,8 +1889,6 @@ TEST_P(ExternalTextureTests, SampleDifferentKindsSameBindGroup) {
 
 // Case with all in different bind group layouts.
 TEST_P(ExternalTextureTests, SampleDifferentKindsDifferentBindGroups) {
-    DAWN_SUPPRESS_TEST_IF(IsWARP());
-
     // Create our three test external of different kinds as well as the expected data.
     std::vector<wgpu::ExternalTexture> externalTextures;
     std::vector<utils::RGBA8> colors;
@@ -1923,6 +2095,127 @@ TEST_P(ExternalTextureTests, UseExternalTextureWithDynamicOffset) {
     }
 }
 
+// Test that the color conversion from PQ to sRGBLinear works as expected.
+TEST_P(ExternalTextureTests, ColorSpaceConversion_PQ_sRGBLinear) {
+    // https://apps.colorjs.io/convert/?color=color(rec2100-pq%200.4%200.2%200.1)&precision=5
+    CheckColorSpaceConversion(
+        {
+            .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+            .transfer = wgpu::ColorSpaceTransferDawn::PQ,
+        },
+        wgpu::PredefinedColorSpace::SRGBLinear, {0.4, 0.2, 0.1, 1},
+        {0.25826747, -0.00636454, -0.00231619});
+
+    // https://apps.colorjs.io/convert/?color=color(rec2100-pq%200.5%200.6%200.9)&precision=5
+    CheckColorSpaceConversion(
+        {
+            .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+            .transfer = wgpu::ColorSpaceTransferDawn::PQ,
+        },
+        wgpu::PredefinedColorSpace::SRGBLinear, {0.5, 0.6, 0.9, 1}, {-1.3534, 1.1445, 21.395});
+
+    // Same test as above but using a different reference white luminance.
+    {
+        float factor = 203.0 / 100.0;
+        CheckColorSpaceConversion(
+            {
+                .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+                .transfer = wgpu::ColorSpaceTransferDawn::PQ,
+                .hdrReferenceWhiteLuminance = 100,
+            },
+            wgpu::PredefinedColorSpace::SRGBLinear, {0.5, 0.6, 0.9, 1},
+            {-1.3534f * factor, 1.1445f * factor, 21.395f * factor});
+    }
+}
+
+// Test that the color conversion from HLG to Rec2020Linear works as expected.
+TEST_P(ExternalTextureTests, ColorSpaceConversion_HLG_Rec2020Linear) {
+    struct TestVector {
+        wgpu::Color hlg;
+        std::array<float, 3> rec2020;
+    };
+    // Test vector were generated using Skia to convert between two SkColorSpaces.
+    auto testVectors = std::array<TestVector, 8>({
+        {{1.00, 1.00, 1.00, 1.0}, {4.926219, 4.926220, 4.926220}},
+        {{0.75, 0.75, 0.75, 1.0}, {1.000729, 1.000729, 1.000729}},
+        {{0.00, 0.00, 0.75, 1.0}, {0.000000, 0.000000, 0.568750}},
+        {{0.00, 0.75, 0.00, 1.0}, {0.000000, 0.925928, 0.000000}},
+        {{0.75, 0.00, 0.00, 1.0}, {0.765934, 0.000000, 0.000000}},
+        {{0.25, 0.50, 0.75, 1.0}, {0.061563, 0.246247, 0.782958}},
+        {{0.50, 0.75, 0.25, 1.0}, {0.298348, 0.948618, 0.074588}},
+        {{0.75, 0.25, 0.50, 1.0}, {0.803970, 0.063215, 0.252855}},
+    });
+
+    for (const auto& testVector : testVectors) {
+        CheckColorSpaceConversion(
+            {
+                .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+                .transfer = wgpu::ColorSpaceTransferDawn::HLG,
+            },
+            wgpu::PredefinedColorSpace::Rec2020Linear, testVector.hlg, testVector.rec2020);
+    }
+}
+
+// Test that the color conversion from HLG to SRGB (non-linear) works as expected.
+TEST_P(ExternalTextureTests, ColorSpaceConversion_HLG_SRGB) {
+    struct TestVector {
+        wgpu::Color hlg;
+        std::array<float, 3> srgb;
+    };
+    // Test vector were generated using Skia to convert between two SkColorSpaces.
+    auto testVectors = std::array<TestVector, 8>({
+        {{1.00, 1.00, 1.00, 1.0}, {1.994927, 1.995262, 1.995293}},
+        {{0.75, 0.75, 0.75, 1.0}, {1.000107, 1.000290, 1.000305}},
+        {{0.00, 0.00, 0.75, 1.0}, {-0.224957, -0.058485, 0.818867}},
+        {{0.00, 0.75, 0.00, 1.0}, {-0.763752, 1.021187, -0.337370}},
+        {{0.75, 0.00, 0.00, 1.0}, {1.111084, -0.341290, -0.122559}},
+        {{0.25, 0.50, 0.75, 1.0}, {-0.348418, 0.551422, 0.930966}},
+        {{0.50, 0.75, 0.25, 1.0}, {-0.288479, 1.016007, -0.139914}},
+        {{0.75, 0.25, 0.50, 1.0}, {1.113976, -0.191790, 0.548725}},
+    });
+
+    for (const auto& testVector : testVectors) {
+        CheckColorSpaceConversion(
+            {
+                .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+                .transfer = wgpu::ColorSpaceTransferDawn::HLG,
+            },
+            wgpu::PredefinedColorSpace::SRGB, testVector.hlg, testVector.srgb);
+    }
+}
+
+// Test that PredefinedColorSpace::Rec2020Linear is the same color space as using primaries of
+// Rec2020 and an identity transfer function. (the Rec2020 primaries are tested as part of the PQ
+// and HLG tests above).
+TEST_P(ExternalTextureTests, ColorSpaceConversion_Rec2020_Rec2020Linear) {
+    CheckColorSpaceConversion(
+        {
+            .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+        },
+        wgpu::PredefinedColorSpace::Rec2020Linear, {0.4, 0.2, 0.1, 1}, {0.4, 0.2, 0.1});
+}
+
+// Test that ColorSpaceTransferDawn::BT_1886 is indeed Gamma 2.4.
+TEST_P(ExternalTextureTests, ColorSpaceConversion_BT1886) {
+    auto G = [](float f) -> float { return std::powf(f, 2.4); };
+
+    CheckColorSpaceConversion(
+        {
+            .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+            .transfer = wgpu::ColorSpaceTransferDawn::BT_1886,
+        },
+        wgpu::PredefinedColorSpace::Rec2020Linear, {0.4, 0.2, 0.1, 1}, {G(0.4), G(0.2), G(0.1)});
+
+    // Test with small values that would be in the linear ramp of sRGB (between 0 and 0.05).
+    CheckColorSpaceConversion(
+        {
+            .primaries = wgpu::ColorSpacePrimariesDawn::Rec2020,
+            .transfer = wgpu::ColorSpaceTransferDawn::BT_1886,
+        },
+        wgpu::PredefinedColorSpace::Rec2020Linear, {0.04, 0.02, 0.01, 1},
+        {G(0.04), G(0.02), G(0.01)});
+}
+
 // TODO(https://crbug.com/468988322): Add tests of ExternalTextures being used with a resource table
 // and with Vulkan's extended dynamic state as these are other interactions that could easily break.
 
@@ -1997,6 +2290,9 @@ class ExternalTextureOOBTests : public ExternalTextureTestsBase<DawnTestWithPara
   protected:
     void SetUp() override {
         ExternalTextureTestsBase<DawnTestWithParams<OOBTestParams>>::SetUp();
+
+        // TODO(crbug.com/522872460): Produces incorrect result on Pixel 10.
+        DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
         sourceTexturePlane0 = Create2DTexture(
             device, kPlaneWidth, kPlaneHeight, wgpu::TextureFormat::R8Unorm,

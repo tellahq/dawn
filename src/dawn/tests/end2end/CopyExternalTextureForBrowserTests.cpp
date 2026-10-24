@@ -27,10 +27,10 @@
 
 #include <vector>
 
-#include "dawn/common/ExternalTextureParams.h"
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/common/ExternalTextureParams.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -283,6 +283,10 @@ class CopyExternalTextureForBrowserTestsBase
                          const wgpu::Extent3D& dstTextureSize,
                          const wgpu::CopyTextureForBrowserOptions options = {},
                          const wgpu::TextureAspect dstAspect = wgpu::TextureAspect::All) {
+        // TODO(crbug.com/563423066): On D3D12 WARP with DXC (DXIL), WARP's ShaderJIT crashes in
+        // Implement_DXIL_ShuffleVector.
+        DAWN_SUPPRESS_TEST_IF(this->IsD3D12() && this->IsWARP());
+
         wgpu::ExternalTexture externalTexture = this->CreateDefaultExternalTexture();
         wgpu::ImageCopyExternalTexture srcImageCopyExternalTexture;
         srcImageCopyExternalTexture.externalTexture = externalTexture;
@@ -313,6 +317,9 @@ class CopyExternalTextureForBrowserTests_Basic
 TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
 
+    // TODO(crbug.com/519266534): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
+
     wgpu::CopyTextureForBrowserOptions options = {};
     options.flipY = GetParam().mFlipY;
 
@@ -323,11 +330,6 @@ TEST_P(CopyExternalTextureForBrowserTests_Basic, Copy) {
     // TODO(crbug.com/346951918): only passes with SrcRect=TopLeft on Pixel 4 (Qualcomm)
     DAWN_SUPPRESS_TEST_IF(IsOpenGLES() && IsAndroid() && IsQualcomm() &&
                           srcCopyRect != CopyRect::TopLeft);
-
-    // Test skip due to crbug.com/dawn/1719
-    DAWN_SUPPRESS_TEST_IF(IsWARP() && srcCopyRect != CopyRect::TopLeft &&
-                          srcCopyRect != CopyRect::FullSize && dstCopyRect != CopyRect::TopLeft &&
-                          dstCopyRect != CopyRect::FullSize && scaleType == ScaleType::DownScale);
 
     float scaleFactor = 1.0;
 
@@ -429,6 +431,9 @@ class CopyExternalTextureForBrowserTests_Aspect : public CopyExternalTextureForB
 
 TEST_P(CopyExternalTextureForBrowserTests_Aspect, Copy) {
     DAWN_SUPPRESS_TEST_IF(IsOpenGL() && IsLinux());
+
+    // TODO(crbug.com/519266534): Produces incorrect result on Pixel 10.
+    DAWN_SUPPRESS_TEST_IF(IsAndroid() && IsImgTec() && IsVulkan());
 
     wgpu::Origin3D srcOrigin = {};
     wgpu::Origin3D dstOrigin = {};

@@ -125,7 +125,6 @@ targets.mixin(
 targets.mixin(
     name = "tint_fuzzer_corpus_generate_args",
     args = [
-        "-generate",
         "-out",
         "${ISOLATED_OUTDIR}/clusterfuzz",
     ],
@@ -143,6 +142,17 @@ targets.mixin(
 )
 
 targets.mixin(
+    name = "tint_ir_mesa_merge",
+    merge = targets.merge(
+        script = "//scripts/merge_scripts/generate_tint_fuzz_corpora.py",
+        args = [
+            "--fuzzer-name",
+            "tint_ir_mesa_fuzzer",
+        ],
+    ),
+)
+
+targets.mixin(
     name = "tint_wgsl_merge",
     merge = targets.merge(
         script = "//scripts/merge_scripts/generate_tint_fuzz_corpora.py",
@@ -154,9 +164,27 @@ targets.mixin(
 )
 
 targets.mixin(
+    name = "tint_wgsl_mesa_merge",
+    merge = targets.merge(
+        script = "//scripts/merge_scripts/generate_tint_fuzz_corpora.py",
+        args = [
+            "--fuzzer-name",
+            "tint_wgsl_mesa_fuzzer",
+        ],
+    ),
+)
+
+targets.mixin(
     name = "true_noop_merge",
     merge = targets.merge(
         script = "//scripts/merge_scripts/true_noop_merge.py",
+    ),
+)
+
+targets.mixin(
+    name = "litert_lm_benchmark_merge",
+    merge = targets.merge(
+        script = "//scripts/merge_scripts/merge_litert_lm_benchmark_results.py",
     ),
 )
 

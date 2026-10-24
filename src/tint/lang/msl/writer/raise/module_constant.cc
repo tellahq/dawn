@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/struct.h"
 #include "src/tint/utils/containers/hashmap.h"
@@ -106,9 +106,11 @@ struct State {
 }  // namespace
 
 Result<SuccessType> ModuleConstant(core::ir::Module& ir, const ModuleConstantConfig& config) {
-    AssertValid(ir, kModuleConstantCapabilities, "before msl.ModuleConstant");
+    AssertValid(ir, "before msl.ModuleConstant");
 
     State{ir, config}.Process();
+
+    ir.properties.Add(core::ir::Property::kAllowModuleScopeLets);
 
     return Success;
 }

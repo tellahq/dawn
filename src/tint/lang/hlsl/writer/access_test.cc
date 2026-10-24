@@ -227,7 +227,7 @@ struct S {
 [numthreads(1, 1, 1)]
 void main() {
   S v = (S)0;
-  float x = v.c.e[1u];
+  float x = v.c.e[int(1)];
 }
 
 )");
@@ -571,10 +571,10 @@ TEST_F(HlslWriterTest, AccessStorageStoreVector) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(0u, asuint(2.0f));
-  v.Store(4u, asuint(4.0f));
-  v.Store(8u, asuint(8.0f));
-  v.Store(12u, asuint(16.0f));
+  v.Store(0u, 1073741824u);
+  v.Store(4u, 1082130432u);
+  v.Store(8u, 1090519040u);
+  v.Store(12u, 1098907648u);
 }
 
 )");
@@ -642,9 +642,8 @@ TEST_F(HlslWriterTest, AccessChainFromUnnamedAccessChain) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* x = b.Access(ty.ptr(storage, sb, core::Access::kReadWrite), var, 2_u);
-        auto* y = b.Access(ty.ptr(storage, Inner, core::Access::kReadWrite), x->Result(), 1_u);
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), y->Result(),
-                                   1_u)));
+        auto* y = b.Access(ty.ptr(storage, Inner, core::Access::kReadWrite), x, 1_u);
+        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), y, 1_u)));
         b.Return(func);
     });
 
@@ -811,9 +810,8 @@ TEST_F(HlslWriterTest, AccessUniformChainFromUnnamedAccessChain) {
     auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* x = b.Access(ty.ptr(uniform, sb, core::Access::kRead), var, 2_u);
-        auto* y = b.Access(ty.ptr(uniform, Inner, core::Access::kRead), x->Result(), 1_u);
-        b.Let("b",
-              b.Load(b.Access(ty.ptr(uniform, ty.u32(), core::Access::kRead), y->Result(), 1_u)));
+        auto* y = b.Access(ty.ptr(uniform, Inner, core::Access::kRead), x, 1_u);
+        b.Let("b", b.Load(b.Access(ty.ptr(uniform, ty.u32(), core::Access::kRead), y, 1_u)));
         b.Return(func);
     });
 
@@ -912,14 +910,70 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v_1 = src;
-  float t_low = f16tof32((v_1 & 65535u));
-  float t_high = f16tof32(((v_1 >> 16u) & 65535u));
-  float16_t v_2 = float16_t(t_low);
-  return vector<float16_t, 2>(v_2, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
 void main() {
   float16_t a = tint_bitcast_to_f16(v[0u].x).x;
+}
+
+)");
+}
+
+TEST_F(HlslWriterTest, AccessImmediateScalarF16) {
+    auto* var = b.Var<immediate, f16, core::Access::kRead>("v");
+
+    b.ir.root_block->Append(var);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    b.Append(func->Block(), [&] {
+        b.Let("a", b.Load(var));
+        b.Return(func);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
+    EXPECT_EQ(output_.hlsl, R"(
+cbuffer cbuffer_v : register(b0) {
+  uint4 v[1];
+};
+vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
+  uint v_1 = src;
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
+}
+
+void main() {
+  float16_t a = tint_bitcast_to_f16(v[0u].x).x;
+}
+
+)");
+}
+
+TEST_F(HlslWriterTest, AccessImmediateVec3F16) {
+    auto* var = b.Var<immediate, vec3<f16>, core::Access::kRead>("v");
+
+    b.ir.root_block->Append(var);
+    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    b.Append(func->Block(), [&] {
+        b.Let("a", b.Load(var));
+        b.Return(func);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
+    EXPECT_EQ(output_.hlsl, R"(
+cbuffer cbuffer_v : register(b0) {
+  uint4 v[1];
+};
+vector<float16_t, 4> tint_bitcast_to_f16(uint2 src) {
+  uint2 v_1 = src;
+  vector<uint16_t, 4> v16 = vector<uint16_t, 4>(((v_1.xxyy >> uint4(0u, 16u, 0u, 16u)) & (65535u).xxxx));
+  return asfloat16(v16);
+}
+
+void main() {
+  vector<float16_t, 3> a = tint_bitcast_to_f16(v[0u].xy).xyz;
 }
 
 )");
@@ -981,32 +1035,22 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v_1 = src;
-  float t_low = f16tof32((v_1 & 65535u));
-  float t_high = f16tof32(((v_1 >> 16u) & 65535u));
-  float16_t v_3 = float16_t(t_low);
-  return vector<float16_t, 2>(v_3, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
 vector<float16_t, 4> tint_bitcast_to_f16_1(uint2 src) {
   uint2 v_2 = src;
-  uint2 mask = (65535u).xx;
-  uint2 shift = (16u).xx;
-  float2 t_low = f16tof32((v_2 & mask));
-  float2 t_high = f16tof32(((v_2 >> shift) & mask));
-  float16_t v_4 = float16_t(t_low.x);
-  float16_t v_5 = float16_t(t_high.x);
-  float16_t v_6 = float16_t(t_low.y);
-  return vector<float16_t, 4>(v_4, v_5, v_6, float16_t(t_high.y));
+  vector<uint16_t, 4> v16 = vector<uint16_t, 4>(((v_2.xxyy >> uint4(0u, 16u, 0u, 16u)) & (65535u).xxxx));
+  return asfloat16(v16);
 }
 
 void main() {
   uint x = 1u;
   vector<float16_t, 4> a = tint_bitcast_to_f16_1(v[0u].xy);
   float16_t b = tint_bitcast_to_f16(v[0u].x).x;
-  uint v_7 = (min(x, 3u) * 2u);
-  uint v_8 = v[(v_7 / 16u)][((v_7 & 15u) >> 2u)];
-  uint v_9 = ((((v_7 % 4u) == 0u)) ? (0u) : (1u));
-  float16_t c = tint_bitcast_to_f16(v_8)[v_9];
+  uint v_3 = (min(x, 3u) * 2u);
+  float16_t c = tint_bitcast_to_f16(v[(v_3 / 16u)][((v_3 & 15u) >> 2u)])[select(((v_3 % 4u) == 0u), 0u, 1u)];
   float16_t d = tint_bitcast_to_f16(v[0u].y).x;
   float16_t e = tint_bitcast_to_f16(v[0u].y).y;
 }
@@ -1101,33 +1145,26 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v_1 = src;
-  float t_low = f16tof32((v_1 & 65535u));
-  float t_high = f16tof32(((v_1 >> 16u) & 65535u));
-  float16_t v_3 = float16_t(t_low);
-  return vector<float16_t, 2>(v_3, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
 vector<float16_t, 4> tint_bitcast_to_f16_1(uint2 src) {
   uint2 v_2 = src;
-  uint2 mask = (65535u).xx;
-  uint2 shift = (16u).xx;
-  float2 t_low = f16tof32((v_2 & mask));
-  float2 t_high = f16tof32(((v_2 >> shift) & mask));
-  float16_t v_4 = float16_t(t_low.x);
-  float16_t v_5 = float16_t(t_high.x);
-  float16_t v_6 = float16_t(t_low.y);
-  return vector<float16_t, 4>(v_4, v_5, v_6, float16_t(t_high.y));
+  vector<uint16_t, 4> v16 = vector<uint16_t, 4>(((v_2.xxyy >> uint4(0u, 16u, 0u, 16u)) & (65535u).xxxx));
+  return asfloat16(v16);
 }
 
-matrix<float16_t, 2, 3> v_7(uint start_byte_offset) {
-  uint4 v_8 = v[(start_byte_offset / 16u)];
-  vector<float16_t, 3> v_9 = tint_bitcast_to_f16_1((((((start_byte_offset & 15u) >> 2u) == 2u)) ? (v_8.zw) : (v_8.xy))).xyz;
-  uint4 v_10 = v[((8u + start_byte_offset) / 16u)];
-  return matrix<float16_t, 2, 3>(v_9, tint_bitcast_to_f16_1(((((((8u + start_byte_offset) & 15u) >> 2u) == 2u)) ? (v_10.zw) : (v_10.xy))).xyz);
+matrix<float16_t, 2, 3> v_3(uint start_byte_offset) {
+  uint4 v_4 = v[(start_byte_offset / 16u)];
+  vector<float16_t, 3> v_5 = tint_bitcast_to_f16_1(select((((start_byte_offset & 15u) >> 2u) == 2u), v_4.zw, v_4.xy)).xyz;
+  uint v_6 = (8u + start_byte_offset);
+  uint4 v_7 = v[(v_6 / 16u)];
+  return matrix<float16_t, 2, 3>(v_5, tint_bitcast_to_f16_1(select((((v_6 & 15u) >> 2u) == 2u), v_7.zw, v_7.xy)).xyz);
 }
 
 void main() {
-  matrix<float16_t, 2, 3> a = v_7(0u);
+  matrix<float16_t, 2, 3> a = v_3(0u);
   vector<float16_t, 3> b = tint_bitcast_to_f16_1(v[0u].zw).xyz;
   float16_t c = tint_bitcast_to_f16(v[0u].w).x;
 }
@@ -1156,11 +1193,11 @@ cbuffer cbuffer_v : register(b0) {
 };
 float3x2 v_1(uint start_byte_offset) {
   uint4 v_2 = v[(start_byte_offset / 16u)];
-  float2 v_3 = asfloat((((((start_byte_offset & 15u) >> 2u) == 2u)) ? (v_2.zw) : (v_2.xy)));
-  uint4 v_4 = v[((8u + start_byte_offset) / 16u)];
-  float2 v_5 = asfloat(((((((8u + start_byte_offset) & 15u) >> 2u) == 2u)) ? (v_4.zw) : (v_4.xy)));
-  uint4 v_6 = v[((16u + start_byte_offset) / 16u)];
-  return float3x2(v_3, v_5, asfloat(((((((16u + start_byte_offset) & 15u) >> 2u) == 2u)) ? (v_6.zw) : (v_6.xy))));
+  uint v_3 = (8u + start_byte_offset);
+  uint4 v_4 = v[(v_3 / 16u)];
+  uint v_5 = (16u + start_byte_offset);
+  uint4 v_6 = v[(v_5 / 16u)];
+  return float3x2(asfloat(select((((start_byte_offset & 15u) >> 2u) == 2u), v_2.zw, v_2.xy)), asfloat(select((((v_3 & 15u) >> 2u) == 2u), v_4.zw, v_4.xy)), asfloat(select((((v_5 & 15u) >> 2u) == 2u), v_6.zw, v_6.xy)));
 }
 
 void main() {
@@ -1194,9 +1231,9 @@ cbuffer cbuffer_v : register(b0) {
 };
 float2x2 v_1(uint start_byte_offset) {
   uint4 v_2 = v[(start_byte_offset / 16u)];
-  float2 v_3 = asfloat((((((start_byte_offset & 15u) >> 2u) == 2u)) ? (v_2.zw) : (v_2.xy)));
-  uint4 v_4 = v[((8u + start_byte_offset) / 16u)];
-  return float2x2(v_3, asfloat(((((((8u + start_byte_offset) & 15u) >> 2u) == 2u)) ? (v_4.zw) : (v_4.xy))));
+  uint v_3 = (8u + start_byte_offset);
+  uint4 v_4 = v[(v_3 / 16u)];
+  return float2x2(asfloat(select((((start_byte_offset & 15u) >> 2u) == 2u), v_2.zw, v_2.xy)), asfloat(select((((v_3 & 15u) >> 2u) == 2u), v_4.zw, v_4.xy)));
 }
 
 void main() {
@@ -1230,19 +1267,18 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v_1 = src;
-  float t_low = f16tof32((v_1 & 65535u));
-  float t_high = f16tof32(((v_1 >> 16u) & 65535u));
-  float16_t v_2 = float16_t(t_low);
-  return vector<float16_t, 2>(v_2, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
-matrix<float16_t, 2, 2> v_3(uint start_byte_offset) {
-  vector<float16_t, 2> v_4 = tint_bitcast_to_f16(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
-  return matrix<float16_t, 2, 2>(v_4, tint_bitcast_to_f16(v[((4u + start_byte_offset) / 16u)][(((4u + start_byte_offset) & 15u) >> 2u)]));
+matrix<float16_t, 2, 2> v_2(uint start_byte_offset) {
+  vector<float16_t, 2> v_3 = tint_bitcast_to_f16(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
+  uint v_4 = (4u + start_byte_offset);
+  return matrix<float16_t, 2, 2>(v_3, tint_bitcast_to_f16(v[(v_4 / 16u)][((v_4 & 15u) >> 2u)]));
 }
 
 void main() {
-  matrix<float16_t, 2, 2> a = v_3(0u);
+  matrix<float16_t, 2, 2> a = v_2(0u);
   vector<float16_t, 2> b = tint_bitcast_to_f16(v[0u].y);
   float16_t c = tint_bitcast_to_f16(v[0u].y).y;
 }
@@ -1317,40 +1353,35 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 4> tint_bitcast_to_f16(uint2 src) {
   uint2 v_1 = src;
-  uint2 mask = (65535u).xx;
-  uint2 shift = (16u).xx;
-  float2 t_low = f16tof32((v_1 & mask));
-  float2 t_high = f16tof32(((v_1 >> shift) & mask));
-  float16_t v_2 = float16_t(t_low.x);
-  float16_t v_3 = float16_t(t_high.x);
-  float16_t v_4 = float16_t(t_low.y);
-  return vector<float16_t, 4>(v_2, v_3, v_4, float16_t(t_high.y));
+  vector<uint16_t, 4> v16 = vector<uint16_t, 4>(((v_1.xxyy >> uint4(0u, 16u, 0u, 16u)) & (65535u).xxxx));
+  return asfloat16(v16);
 }
 
 typedef vector<float16_t, 3> ary_ret[5];
-ary_ret v_5(uint start_byte_offset) {
+ary_ret v_2(uint start_byte_offset) {
   vector<float16_t, 3> a[5] = (vector<float16_t, 3>[5])0;
   {
-    uint v_6 = 0u;
-    v_6 = 0u;
+    uint v_3 = 0u;
+    v_3 = 0u;
     while(true) {
-      uint v_7 = v_6;
-      if ((v_7 >= 5u)) {
+      uint v_4 = v_3;
+      if ((v_4 >= 5u)) {
         break;
       }
-      uint4 v_8 = v[((start_byte_offset + (v_7 * 8u)) / 16u)];
-      a[v_7] = tint_bitcast_to_f16(((((((start_byte_offset + (v_7 * 8u)) & 15u) >> 2u) == 2u)) ? (v_8.zw) : (v_8.xy))).xyz;
+      uint v_5 = (start_byte_offset + (v_4 * 8u));
+      uint4 v_6 = v[(v_5 / 16u)];
+      a[v_4] = tint_bitcast_to_f16(select((((v_5 & 15u) >> 2u) == 2u), v_6.zw, v_6.xy)).xyz;
       {
-        v_6 = (v_7 + 1u);
+        v_3 = (v_4 + 1u);
       }
     }
   }
-  vector<float16_t, 3> v_9[5] = a;
-  return v_9;
+  vector<float16_t, 3> v_7[5] = a;
+  return v_7;
 }
 
 void main() {
-  vector<float16_t, 3> a[5] = v_5(0u);
+  vector<float16_t, 3> a[5] = v_2(0u);
   vector<float16_t, 3> b = tint_bitcast_to_f16(v[1u].zw).xyz;
 }
 
@@ -1433,8 +1464,9 @@ cbuffer cbuffer_v : register(b0) {
   uint4 v[1];
 };
 SB v_1(uint start_byte_offset) {
-  SB v_2 = {asint(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]), asfloat(v[((4u + start_byte_offset) / 16u)][(((4u + start_byte_offset) & 15u) >> 2u)])};
-  return v_2;
+  uint v_2 = (4u + start_byte_offset);
+  SB v_3 = {asint(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]), asfloat(v[(v_2 / 16u)][((v_2 & 15u) >> 2u)])};
+  return v_3;
 }
 
 void main() {
@@ -1475,22 +1507,19 @@ cbuffer cbuffer_v : register(b0) {
 };
 vector<float16_t, 2> tint_bitcast_to_f16(uint src) {
   uint v_1 = src;
-  float t_low = f16tof32((v_1 & 65535u));
-  float t_high = f16tof32(((v_1 >> 16u) & 65535u));
-  float16_t v_2 = float16_t(t_low);
-  return vector<float16_t, 2>(v_2, float16_t(t_high));
+  vector<uint16_t, 2> v16 = vector<uint16_t, 2>(((uint2(v_1, v_1) >> uint2(0u, 16u)) & (65535u).xx));
+  return asfloat16(v16);
 }
 
-SB v_3(uint start_byte_offset) {
-  int v_4 = asint(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
-  uint v_5 = v[((4u + start_byte_offset) / 16u)][(((4u + start_byte_offset) & 15u) >> 2u)];
-  uint v_6 = (((((4u + start_byte_offset) % 4u) == 0u)) ? (0u) : (1u));
-  SB v_7 = {v_4, tint_bitcast_to_f16(v_5)[v_6]};
-  return v_7;
+SB v_2(uint start_byte_offset) {
+  int v_3 = asint(v[(start_byte_offset / 16u)][((start_byte_offset & 15u) >> 2u)]);
+  uint v_4 = (4u + start_byte_offset);
+  SB v_5 = {v_3, tint_bitcast_to_f16(v[(v_4 / 16u)][((v_4 & 15u) >> 2u)])[select(((v_4 % 4u) == 0u), 0u, 1u)]};
+  return v_5;
 }
 
 void main() {
-  SB a = v_3(0u);
+  SB a = v_2(0u);
   float16_t b = tint_bitcast_to_f16(v[0u].y).x;
 }
 
@@ -1617,7 +1646,7 @@ TEST_F(HlslWriterTest, AccessStoreScalar) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(0u, asuint(2.0f));
+  v.Store(0u, 1073741824u);
 }
 
 )");
@@ -1661,7 +1690,7 @@ TEST_F(HlslWriterTest, AccessStoreVectorElement) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(4u, asuint(2.0f));
+  v.Store(4u, 1073741824u);
 }
 
 )");
@@ -1705,7 +1734,7 @@ TEST_F(HlslWriterTest, AccessStoreVector) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store3(0u, asuint(float3(2.0f, 3.0f, 4.0f)));
+  v.Store3(0u, uint3(1073741824u, 1077936128u, 1082130432u));
 }
 
 )");
@@ -1750,7 +1779,7 @@ TEST_F(HlslWriterTest, AccessStoreMatrixElement) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(24u, asuint(5.0f));
+  v.Store(24u, 1084227584u);
 }
 
 )");
@@ -1796,7 +1825,7 @@ TEST_F(HlslWriterTest, AccessStoreMatrixColumn) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store4(16u, asuint((5.0f).xxxx));
+  v.Store4(16u, (1084227584u).xxxx);
 }
 
 )");
@@ -1899,7 +1928,7 @@ TEST_F(HlslWriterTest, AccessStoreArrayElement) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(12u, asuint(1.0f));
+  v.Store(12u, 1065353216u);
 }
 
 )");
@@ -1989,7 +2018,7 @@ TEST_F(HlslWriterTest, AccessStoreStructMember) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(4u, asuint(3.0f));
+  v.Store(4u, 1077936128u);
 }
 
 )");
@@ -2053,7 +2082,7 @@ TEST_F(HlslWriterTest, AccessStoreStructNested) {
     EXPECT_EQ(output_.hlsl, R"(
 RWByteAddressBuffer v : register(u0);
 void main() {
-  v.Store(16u, asuint(2.0f));
+  v.Store(16u, 1073741824u);
 }
 
 )");
@@ -2281,63 +2310,6 @@ cbuffer cbuffer_v : register(b0) {
 void main() {
   float b = asfloat(v[1u].y);
   float c = asfloat(v[1u].z);
-}
-
-)");
-}
-
-TEST_F(HlslWriterTest, AccessStorage_OffsetFromUniform) {
-    auto* arr = b.Var<storage, array<vec3<f32>, 10>, core::Access::kReadWrite>("array");
-    arr->SetBindingPoint(1, 2);
-
-    auto* vec2_u32 = b.Var<storage, vec2<u32>, core::Access::kReadWrite>("vec2_u32");
-    vec2_u32->SetBindingPoint(1, 3);
-
-    auto* vec4_f16 = b.Var<storage, vec4<f16>, core::Access::kReadWrite>("vec4_f16");
-    vec4_f16->SetBindingPoint(1, 4);
-
-    b.ir.root_block->Append(arr);
-    b.ir.root_block->Append(vec2_u32);
-    b.ir.root_block->Append(vec4_f16);
-
-    auto* func = b.Function("main", ty.void_(), core::ir::Function::PipelineStage::kFragment);
-    b.Append(func->Block(), [&] {
-        b.Let("a",
-              b.Load(b.Access(ty.ptr<storage, vec3<f32>, core::Access::kReadWrite>(), arr, 3_u)));
-        b.Store(b.Access(ty.ptr<storage, vec3<f32>, core::Access::kReadWrite>(), arr, 5_u),
-                b.Zero<vec3<f32>>());
-
-        b.Let("b", b.LoadVectorElement(vec2_u32, 1_u));
-        b.StoreVectorElement(vec2_u32, 1_u, 42_u);
-
-        b.Let("c", b.LoadVectorElement(vec4_f16, 3_u));
-        b.StoreVectorElement(vec4_f16, 3_u, 43_h);
-
-        b.Return(func);
-    });
-
-    Options options;
-    options.entry_point_name = "main";
-    options.array_offset_from_uniform.ubo_binding = {11, 12};
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{1, 2}] = 3;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{1, 3}] = 4;
-    options.array_offset_from_uniform.bindpoint_to_offset_index[{1, 4}] = 5;
-    auto result = Generate(options);
-    ASSERT_EQ(result, Success) << result.Failure().reason << output_.hlsl;
-    EXPECT_EQ(output_.hlsl, R"(
-RWByteAddressBuffer array_1 : register(u2, space1);
-RWByteAddressBuffer vec2_u32 : register(u3, space1);
-RWByteAddressBuffer vec4_f16 : register(u4, space1);
-cbuffer cbuffer_tint_storage_buffer_dynamic_offsets : register(b12, space11) {
-  uint4 tint_storage_buffer_dynamic_offsets[2];
-};
-void main() {
-  float3 a = asfloat(array_1.Load3((48u + tint_storage_buffer_dynamic_offsets[0u].w)));
-  array_1.Store3((80u + tint_storage_buffer_dynamic_offsets[0u].w), asuint((0.0f).xxx));
-  uint b = vec2_u32.Load((4u + tint_storage_buffer_dynamic_offsets[1u].x));
-  vec2_u32.Store((4u + tint_storage_buffer_dynamic_offsets[1u].x), 42u);
-  float16_t c = vec4_f16.Load<float16_t>((6u + tint_storage_buffer_dynamic_offsets[1u].y));
-  vec4_f16.Store<float16_t>((6u + tint_storage_buffer_dynamic_offsets[1u].y), float16_t(43.0h));
 }
 
 )");

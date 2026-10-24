@@ -25,9 +25,9 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/native/d3d/D3DError.h"
+#include "src/dawn/native/d3d/D3DError.h"
 
-#include "dawn/common/windows_with_undefs.h"
+#include "src/utils/windows_with_undefs.h"
 
 #include <iomanip>
 #include <sstream>
@@ -116,7 +116,7 @@ MaybeError CheckHRESULTImpl(HRESULT result, const char* context) {
                   << ")";
 
     if (result == DXGI_ERROR_DEVICE_REMOVED) {
-        return DAWN_DEVICE_LOST_ERROR(messageStream.str());
+        return DAWN_BACKEND_DEVICE_LOST_ERROR(messageStream.str());
     } else {
         return DAWN_INTERNAL_ERROR(messageStream.str());
     }

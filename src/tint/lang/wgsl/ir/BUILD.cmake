@@ -34,9 +34,11 @@
 #                       Do not modify this file directly
 ################################################################################
 
+if(TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER)
 ################################################################################
 # Target:    tint_lang_wgsl_ir
 # Kind:      lib
+# Condition: TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_wgsl_ir lib
   lang/wgsl/ir/atomic_vec2u_to_from_u64.cc
@@ -53,6 +55,7 @@ tint_target_add_dependencies(tint_lang_wgsl_ir lib
   tint_lang_core_constant
   tint_lang_core_intrinsic
   tint_lang_core_ir
+  tint_lang_core_ir_validator
   tint_lang_core_type
   tint_lang_wgsl
   tint_lang_wgsl_intrinsic
@@ -63,6 +66,7 @@ tint_target_add_dependencies(tint_lang_wgsl_ir lib
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -72,9 +76,12 @@ tint_target_add_external_dependencies(tint_lang_wgsl_ir lib
   "src_utils"
 )
 
+endif(TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER)
+if(TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER)
 ################################################################################
 # Target:    tint_lang_wgsl_ir_test
 # Kind:      test
+# Condition: TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER
 ################################################################################
 tint_add_target(tint_lang_wgsl_ir_test test
   lang/wgsl/ir/atomic_vec2u_to_from_u64_test.cc
@@ -89,6 +96,7 @@ tint_target_add_dependencies(tint_lang_wgsl_ir_test test
   tint_lang_core_ir
   tint_lang_core_ir_transform
   tint_lang_core_ir_transform_test
+  tint_lang_core_ir_validator
   tint_lang_core_ir_test
   tint_lang_core_type
   tint_lang_wgsl
@@ -97,9 +105,6 @@ tint_target_add_dependencies(tint_lang_wgsl_ir_test test
   tint_lang_wgsl_ir
   tint_lang_wgsl_program
   tint_lang_wgsl_sem
-  tint_lang_wgsl_writer_common
-  tint_lang_wgsl_writer_ir_to_program
-  tint_lang_wgsl_writer_raise
   tint_utils
   tint_utils_containers
   tint_utils_diagnostic
@@ -107,6 +112,7 @@ tint_target_add_dependencies(tint_lang_wgsl_ir_test test
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
+  tint_utils_reflection
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
@@ -133,5 +139,10 @@ endif(TINT_BUILD_WGSL_READER AND TINT_BUILD_WGSL_WRITER)
 if(TINT_BUILD_WGSL_WRITER)
   tint_target_add_dependencies(tint_lang_wgsl_ir_test test
     tint_lang_wgsl_writer
+    tint_lang_wgsl_writer_common
+    tint_lang_wgsl_writer_ir_to_program
+    tint_lang_wgsl_writer_raise
   )
 endif(TINT_BUILD_WGSL_WRITER)
+
+endif(TINT_BUILD_WGSL_READER OR TINT_BUILD_WGSL_WRITER)

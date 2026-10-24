@@ -31,7 +31,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/type/array.h"
 #include "src/tint/lang/core/type/atomic.h"
 #include "src/tint/lang/core/type/pointer.h"
@@ -146,7 +146,7 @@ struct State {
                                                   ? core::BuiltinFn::kAtomicStoreMax
                                                   : core::BuiltinFn::kAtomicStoreMin;
 
-                    b.CallWithResult(call->DetachResult(), core_fn, ptr_atomic, casted_u64);
+                    b.CallReplaceResult(call->DetachResult(), core_fn, ptr_atomic, casted_u64);
                     call->Destroy();
                 },
                 [&](core::ir::CoreBuiltinCall* call) {
@@ -167,9 +167,7 @@ struct State {
                     auto as_store = as_ptr->StoreType()->As<core::type::Atomic>();
                     TINT_ASSERT(as_store->Type()->Is<core::type::Vector>());
 
-                    auto* as_inst_result = param_u64->As<core::ir::InstructionResult>();
-                    TINT_ASSERT(as_inst_result);
-                    auto* as_inst = as_inst_result->Instruction();
+                    auto* as_inst = param_u64->AsInstruction();
                     TINT_ASSERT(as_inst);
                     auto* as_bitcast = as_inst->As<core::ir::CoreBuiltinCall>();
                     TINT_ASSERT(as_bitcast);
@@ -230,6 +228,7 @@ struct State {
                     if (direction == AtomicVec2uU64Direction::kToU64) {
                         auto* vec = atomic->Type()->As<core::type::Vector>();
                         if (vec && vec->Width() == 2 && vec->Type()->Is<core::type::U32>()) {
+                            ir.properties.Add(core::ir::Property::kAllow64BitIntegers);
                             return ty.atomic(ty.u64());
                         }
                         return atomic;
@@ -248,12 +247,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> AtomicVec2uToFromU64(core::ir::Module& ir, AtomicVec2uU64Direction direction) {
-    core::ir::AssertValid(ir,
-                          core::ir::Capabilities{
-                              core::ir::Capability::kAllowMultipleEntryPoints,
-                              core::ir::Capability::kAllowOverrides,
-                          },
-                          "before transform::AtomicVec2uToFromU64");
+    core::ir::AssertValid(ir, "before transform::AtomicVec2uToFromU64");
 
     State{ir, direction}.Process();
 

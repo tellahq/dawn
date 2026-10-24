@@ -31,10 +31,10 @@
 #include <memory>
 
 #include "absl/container/flat_hash_map.h"
-#include "dawn/common/Log.h"
-#include "dawn/mock_webgpu.h"
-#include "dawn/tests/MockCallback.h"
 #include "gtest/gtest.h"
+#include "src/dawn/mock_webgpu.h"
+#include "src/dawn/tests/MockCallback.h"
+#include "src/utils/log.h"
 #include "webgpu/webgpu_cpp.h"
 
 namespace dawn {
@@ -169,19 +169,21 @@ class WireTest : virtual public testing::Test {
         uncapturedErrorCallback;
 
     wgpu::Instance instance;
-    WGPUInstance apiInstance;
+    WGPUInstance apiInstance = nullptr;
     wgpu::Adapter adapter;
-    WGPUAdapter apiAdapter;
+    WGPUAdapter apiAdapter = nullptr;
     wgpu::Device device;
-    WGPUDevice apiDevice;
+    WGPUDevice apiDevice = nullptr;
     wgpu::Queue queue;
-    WGPUQueue apiQueue;
+    WGPUQueue apiQueue = nullptr;
 
     wire::WireServer* GetWireServer();
     wire::WireClient* GetWireClient();
 
     wire::CommandSerializer* GetC2SSerializer();
     wire::CommandSerializer* GetS2CSerializer();
+
+    utils::TerribleCommandBuffer* GetC2SCommandBuffer();
 
     size_t GetC2SMaxAllocationSize();
 

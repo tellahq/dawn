@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -163,8 +163,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> RemoveTerminatorArgs(Module& ir) {
-    core::ir::AssertValid(ir, kRemoveTerminatorArgsCapabilities,
-                          "before core.RemoveTerminatorArgs");
+    core::ir::AssertValid(ir, "before core.RemoveTerminatorArgs");
 
     State{ir}.Process();
 

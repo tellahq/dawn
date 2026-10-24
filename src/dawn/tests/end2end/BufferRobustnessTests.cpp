@@ -28,9 +28,9 @@
 #include <string>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
-#include "dawn/utils/ComboRenderPipelineDescriptor.h"
-#include "dawn/utils/WGPUHelpers.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/dawn/utils/ComboRenderPipelineDescriptor.h"
+#include "src/dawn/utils/WGPUHelpers.h"
 
 namespace dawn {
 namespace {
@@ -141,7 +141,7 @@ class MetalBufferRobustnessTest : public DawnTest {
         struct Draw {
             uint32_t vertexCount, instanceCount, firstVertex, firstInstance;
         };
-        std::array<Draw, kNumChecks> indirectData;
+        std::array<Draw, kNumChecks> indirectData{};
         for (uint32_t i = 0; i < kNumChecks; ++i) {
             // One check at each vertex offset. Uses the instance_index to pass the output position.
             indirectData[i] = {1, 1, firstVertex + i, i};

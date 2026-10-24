@@ -35,12 +35,14 @@
 #include <utility>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
+#include "src/dawn/tests/DawnTest.h"
 
 namespace dawn {
 
 class SharedTextureMemoryTestBackend {
   public:
+    virtual ~SharedTextureMemoryTestBackend() = default;
+
     virtual void SetUp(const wgpu::Device& device) {}
     virtual void TearDown() {}
 
@@ -61,10 +63,6 @@ class SharedTextureMemoryTestBackend {
     virtual std::vector<std::vector<wgpu::SharedTextureMemory>>
     CreatePerDeviceSharedTextureMemories(const std::vector<wgpu::Device>& devices,
                                          int layerCount) = 0;
-
-    // Import `fence` which may have been created on some other device, onto `importingDevice`.
-    wgpu::SharedFence ImportFenceTo(const wgpu::Device& importingDevice,
-                                    const wgpu::SharedFence& fence);
 
     // Shorthand version of `CreatePerDeviceSharedTextureMemories` that creates memories on a single
     // device.
@@ -192,6 +190,21 @@ class SharedTextureMemoryTests : public DawnTestWithParams<SharedTextureMemoryTe
     void CheckFourColors(wgpu::Device& deviceObj,
                          wgpu::TextureFormat format,
                          wgpu::Texture& colorTarget);
+    wgpu::ResourceTable MakeResourceTable(
+        wgpu::Device& deviceObj,
+        uint32_t size,
+        std::vector<std::pair<uint32_t, wgpu::BindingResource>> resources = {});
+    wgpu::ResourceTable MakeResourceTable(
+        uint32_t size,
+        std::vector<std::pair<uint32_t, wgpu::BindingResource>> resources = {});
+    wgpu::TextureView CreateViewForTable(const wgpu::Texture& tex);
+    void TestTableHasResource(wgpu::ResourceTable table,
+                              std::vector<bool> expected,
+                              std::string wgslType = "texture_2d<f32>");
+    std::pair<wgpu::CommandBuffer, wgpu::Texture> MakeCheckBySamplingResourceTableCommandBuffer(
+        wgpu::Device& deviceObj,
+        wgpu::ResourceTable table,
+        wgpu::Texture& texture);
 };
 
 }  // namespace dawn

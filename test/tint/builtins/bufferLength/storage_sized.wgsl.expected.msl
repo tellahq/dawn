@@ -1,17 +1,12 @@
-SKIP: FAILED
+#include <metal_stdlib>
+using namespace metal;
 
-$B1: {  # root
-  %v:ptr<storage, buffer<128>, read> = var undef @binding_point(0, 0)
-  %out:ptr<storage, u32, read_write> = var undef @binding_point(0, 1)
+struct tint_module_vars_struct {
+  device uint* out;
+};
+
+[[max_total_threads_per_threadgroup(1)]]
+kernel void v_1(device uint* out [[buffer(1)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.out=out};
+  (*tint_module_vars.out) = 128u;
 }
-
-%main = @compute @workgroup_size(1i, 1i, 1i) func():void {
-  $B2: {
-    %4:u32 = bufferLength %v
-    store %out, %4
-    ret
-  }
-}
-Failed to generate: buffers are not supported by the MSL backend
-
-tint executable returned error: exit status 1

@@ -34,11 +34,13 @@
 #include <utility>
 
 #include "absl/strings/str_format.h"
-#include "dawn/common/Result.h"
+#include "src/dawn/common/Result.h"
 
 namespace dawn::replay {
 
 enum class InternalErrorType : uint32_t { None = 0, Internal = 1, OutOfMemory = 2 };
+
+enum class VisitStatus { Continue, Stop };
 
 class [[nodiscard]] ErrorData {
   public:
@@ -64,12 +66,14 @@ using MaybeError = Result<void, ErrorData>;
 template <typename T>
 using ResultOrError = Result<T, ErrorData>;
 
+using VisitResult = ResultOrError<VisitStatus>;
+
 // Returning a success is done like so:
 //   return {}; // for Error
 //   return SomethingOfTypeT; // for ResultOrError<T>
 //
 // Returning an error is done via:
-//   return DAWN_MAKE_ERROR(errorType, "My error message");
+//   return DAWN_MAKE_INTERNAL_ERROR(errorType, "My error message");
 //
 // but shorthand version for specific error types are preferred:
 //   return DAWN_INTERNAL_ERROR("My error message with details %s", details);

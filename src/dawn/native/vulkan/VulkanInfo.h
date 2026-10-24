@@ -30,10 +30,10 @@
 
 #include <vector>
 
-#include "dawn/common/ityp_array.h"
-#include "dawn/common/vulkan_platform.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/vulkan/VulkanExtensions.h"
+#include "src/dawn/common/ityp_array.h"
+#include "src/dawn/common/vulkan_platform.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/vulkan/VulkanExtensions.h"
 
 namespace dawn::native::vulkan {
 
@@ -55,7 +55,7 @@ struct VulkanGlobalKnobs {
 };
 
 struct VulkanGlobalInfo : VulkanGlobalKnobs {
-    uint32_t apiVersion;
+    uint32_t apiVersion = 0;
 };
 
 // Device information - gathered before the device is created.
@@ -76,10 +76,15 @@ struct VulkanDeviceKnobs {
     VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperativeMatrixFeatures;
     VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures;
     VkPhysicalDevicePipelineRobustnessFeatures pipelineRobustnessFeatures;
+    VkPhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT
+        rasterizationOrderAttachmentAccessFeatures;
     VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures;
     VkPhysicalDeviceMultisampledRenderToSingleSampledFeaturesEXT
         multisampledRenderToSingleSampledFeatures;
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extendedDynamicStateFeatures;
+    VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR shaderMaximalReconvergenceFeatures;
+    VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR
+        shaderSubgroupUniformControlFlowFeatures;
 
     bool HasExt(DeviceExt ext) const;
     DeviceExtSet extensions;
@@ -111,7 +116,7 @@ struct VulkanDeviceInfo : VulkanDeviceKnobs {
 };
 
 struct VulkanSurfaceInfo {
-    VkSurfaceCapabilitiesKHR capabilities;
+    VkSurfaceCapabilitiesKHR capabilities{};
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
     std::vector<bool> supportedQueueFamilies;

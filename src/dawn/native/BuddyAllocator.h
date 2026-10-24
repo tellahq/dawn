@@ -76,8 +76,8 @@ class BuddyAllocator {
             free.pNext = nullptr;
         }
 
-        uint64_t mOffset;
-        uint64_t mSize;
+        uint64_t mOffset = 0;
+        uint64_t mSize = 0;
 
         // Pointer to this block's buddy, iff parent is split.
         // Used to quickly merge buddy blocks upon de-allocate.
@@ -89,13 +89,13 @@ class BuddyAllocator {
 
         struct FreeLinks {
             // RAW_PTR_EXCLUSION: #union
-            RAW_PTR_EXCLUSION BuddyBlock* pPrev;
-            RAW_PTR_EXCLUSION BuddyBlock* pNext;
+            RAW_PTR_EXCLUSION BuddyBlock* pPrev = nullptr;
+            RAW_PTR_EXCLUSION BuddyBlock* pNext = nullptr;
         };
 
         struct SplitLink {
             // RAW_PTR_EXCLUSION: #union
-            RAW_PTR_EXCLUSION BuddyBlock* pLeft;
+            RAW_PTR_EXCLUSION BuddyBlock* pLeft = nullptr;
         };
 
         union {

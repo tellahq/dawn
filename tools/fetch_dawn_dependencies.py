@@ -97,7 +97,7 @@ def main(args):
     # Dependencies of dependencies are prefixed by their ancestors.
     required_submodules = [
         'third_party/abseil-cpp',
-        'third_party/dxc',
+        'third_party/directx-shader-compiler/src',
         'third_party/directx-headers/src',
         'third_party/glfw3/src',
         'third_party/jinja2',
@@ -108,7 +108,7 @@ def main(args):
         'third_party/markupsafe',
         'third_party/glslang/src',
         'third_party/google_benchmark/src',
-        'third_party/googletest',
+        'third_party/googletest/src',
         'third_party/spirv-headers/src',
         'third_party/spirv-tools/src',
         'third_party/vulkan-headers/src',
@@ -137,7 +137,8 @@ def process_dir(args, dir_path, required_submodules):
     DEPS = open(deps_path).read()
 
     ldict = {}
-    exec(DEPS, globals(), ldict)
+    exec(DEPS, {'Var': Var, 'Str': str}, ldict)
+
     deps = ldict.get('deps')
     variables = ldict.get('vars', {})
 

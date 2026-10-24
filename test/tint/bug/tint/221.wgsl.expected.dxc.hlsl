@@ -1,7 +1,7 @@
 
 RWByteAddressBuffer b : register(u0);
 uint tint_mod_u32(uint lhs, uint rhs) {
-  uint v = (((rhs == 0u)) ? (1u) : (rhs));
+  uint v = select((rhs == 0u), 1u, rhs);
   return (lhs - ((lhs / v) * v));
 }
 

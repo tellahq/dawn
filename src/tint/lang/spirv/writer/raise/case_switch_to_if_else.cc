@@ -37,7 +37,7 @@
 #include "src/tint/lang/core/ir/instruction.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/switch.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/core/ir/value.h"
 
 using namespace tint::core::fluent_types;  // NOLINT
@@ -45,12 +45,6 @@ using namespace tint::core::fluent_types;  // NOLINT
 namespace tint::spirv::writer::raise {
 
 namespace {
-
-const core::ir::Capabilities kCaseSwitchToIfElseCapabilities{
-    core::ir::Capability::kAllowDuplicateBindings,
-    core::ir::Capability::kAllowAnyInputAttachmentIndexType,
-    core::ir::Capability::kAllowNonCoreTypes,
-};
 
 /// PIMPL state for the transform, for a single function.
 struct State {
@@ -122,9 +116,9 @@ struct State {
                     for (auto& sel : c.selectors) {
                         auto* curr_selector = b.Equal(switch_cond, sel.val->As<core::ir::Value>());
                         if (case_cond) {
-                            case_cond = b.Or(curr_selector, case_cond)->Result();
+                            case_cond = b.Or(curr_selector, case_cond);
                         } else {
-                            case_cond = curr_selector->Result();
+                            case_cond = curr_selector;
                         }
                     }
                     conditions.Push(case_cond);
@@ -147,7 +141,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> CaseSwitchToIfElse(core::ir::Module& ir) {
-    core::ir::AssertValid(ir, kCaseSwitchToIfElseCapabilities, "before spirv.CaseSwitchToIfElse");
+    core::ir::AssertValid(ir, "before spirv.CaseSwitchToIfElse");
 
     State{ir}.Process();
 

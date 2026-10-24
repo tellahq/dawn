@@ -1,22 +1,8 @@
 //
-// any
-//
-#version 460
-precision highp float;
-precision highp int;
-
-layout(location = 0) uniform uint tint_immediates[2];
-float any_inner() {
-  return 1.0f;
-}
-void main() {
-  float v = any_inner();
-  gl_FragDepth = clamp(v, uintBitsToFloat(tint_immediates[0u]), uintBitsToFloat(tint_immediates[1u]));
-}
-//
 // less
 //
 #version 460
+#extension GL_EXT_conservative_depth: require
 precision highp float;
 precision highp int;
 
@@ -33,6 +19,7 @@ void main() {
 // greater
 //
 #version 460
+#extension GL_EXT_conservative_depth: require
 precision highp float;
 precision highp int;
 

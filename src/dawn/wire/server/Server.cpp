@@ -25,9 +25,10 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "dawn/wire/server/Server.h"
+#include "src/dawn/wire/server/Server.h"
 
 #include "dawn/wire/WireServer.h"
+#include "src/dawn/wire/server/ServerInlineMemoryTransferService.h"
 
 namespace dawn::wire::server {
 
@@ -185,7 +186,7 @@ void Server::SetForwardingDeviceCallbacks(Known<WGPUDevice> device) {
         device->handle, {nullptr,
                          [](WGPULoggingType type, WGPUStringView message, void* userdata, void*) {
                              DeviceInfo* info = static_cast<DeviceInfo*>(userdata);
-                             info->server->OnLogging(info->self, type, message);
+                             info->server->OnLogging(info->self, FromAPI(type), FromAPI(message));
                              info->server->Flush();
                          },
                          device->info.get(), nullptr});

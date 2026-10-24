@@ -31,7 +31,7 @@
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 #include "src/tint/lang/glsl/builtin_fn.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
@@ -76,7 +76,7 @@ TEST_F(IR_GlslMemberBuiltinCallTest, CloneWithExplicitParams) {
 
     auto* access = b.Access(ty.ptr<storage, array<u32>, read_write>(), var, 0_u);
     auto* builtin = b.MemberCall<MemberBuiltinCall>(mod.Types().i32(), BuiltinFn::kLength, access);
-    builtin->SetExplicitTemplateParams(Vector{mod.Types().i32()});
+    builtin->SetExplicitTemplateParams(Vector<core::ir::TemplateParameter, 1>{mod.Types().i32()});
 
     auto* new_b = clone_ctx.Clone(builtin);
     EXPECT_NE(builtin->Result(), new_b->Result());

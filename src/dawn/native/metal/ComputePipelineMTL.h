@@ -32,9 +32,9 @@
 
 #include <vector>
 
-#include "dawn/common/NSRef.h"
-#include "dawn/native/ComputePipeline.h"
-#include "dawn/native/CreatePipelineAsyncEvent.h"
+#include "src/dawn/common/NSRef.h"
+#include "src/dawn/native/ComputePipeline.h"
+#include "src/dawn/native/CreatePipelineAsyncEvent.h"
 
 namespace dawn::native::metal {
 
@@ -51,14 +51,12 @@ class ComputePipeline final : public ComputePipelineBase {
 
     void Encode(id<MTLComputeCommandEncoder> encoder);
     MTLSize GetLocalWorkGroupSize() const;
-    bool RequiresStorageBufferLength() const;
 
   private:
     using ComputePipelineBase::ComputePipelineBase;
     ResultOrError<Extent3D> InitializeImpl() override;
 
     NSPRef<id<MTLComputePipelineState>> mMtlComputePipelineState;
-    bool mRequiresStorageBufferLength;
     std::vector<uint32_t> mWorkgroupAllocations;
 };
 

@@ -1,24 +1,29 @@
-SKIP: FAILED
+#include <metal_stdlib>
+using namespace metal;
 
-$B1: {  # root
-  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+struct tint_immediate_data_struct {
+  /* 0x0000 */ uint tint_non_constant_zero;
+  /* 0x0004 */ array<int8_t, 2044> tint_pad;
+  /* 0x0800 */ array<uint, 1> tint_storage_buffer_sizes;
+};
+
+struct tint_module_vars_struct {
+  device array<uchar, 1>* v;
+  const constant tint_immediate_data_struct* tint_immediate_data;
+};
+
+struct tint_array_lengths_struct {
+  uint tint_array_length_0_0;
+};
+
+void foo(device array<uchar, 1>* const p, uint tint_array_length) {
+  bool const v_1 = (tint_array_length < 32u);
+  device array<float2, 1>* const p2 = reinterpret_cast<device array<float2, 1>*>(reinterpret_cast<device char*>(p) + select(0u, 0u, v_1));
+  (*p2)[min(0u, ((select(32u, 8u, v_1) / 8u) - 1u))].y = 3.0f;
 }
 
-%foo = func(%p:ptr<storage, buffer, read_write>):void {
-  $B2: {
-    %4:ptr<storage, array<vec2<f32>>, read_write> = bufferArrayView<array<vec2<f32>>> %p, 0i, 32i
-    %p2:ptr<storage, array<vec2<f32>>, read_write> = let %4
-    %6:ptr<storage, vec2<f32>, read_write> = access %p2, 0i
-    store_vector_element %6, 1u, 3.0f
-    ret
-  }
+[[max_total_threads_per_threadgroup(1)]]
+kernel void v_2(device array<uchar, 1>* v [[buffer(0)]], const constant tint_immediate_data_struct* tint_immediate_data [[buffer(30)]]) {
+  tint_module_vars_struct const tint_module_vars = tint_module_vars_struct{.v=v, .tint_immediate_data=tint_immediate_data};
+  (foo(tint_module_vars.v, tint_array_lengths_struct{.tint_array_length_0_0=(*tint_module_vars.tint_immediate_data).tint_storage_buffer_sizes[0u]}.tint_array_length_0_0));
 }
-%main = @compute @workgroup_size(1i, 1i, 1i) func():void {
-  $B3: {
-    %8:void = call %foo, %v
-    ret
-  }
-}
-Failed to generate: buffers are not supported by the MSL backend
-
-tint executable returned error: exit status 1

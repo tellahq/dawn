@@ -32,7 +32,6 @@
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/ir/transform/helper_test.h"
-#include "src/tint/lang/core/ir/validator.h"
 #include "src/tint/lang/core/number.h"
 #include "src/tint/lang/core/type/builtin_structs.h"
 #include "src/tint/lang/core/type/depth_multisampled_texture.h"
@@ -43,12 +42,14 @@
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
-using Capability = tint::core::ir::Capability;
 
 namespace tint::hlsl::writer::raise {
 namespace {
 
-using HlslWriter_BuiltinPolyfillTest = core::ir::transform::TransformTest;
+struct HlslWriter_BuiltinPolyfillTest : public core::ir::transform::TransformTest {
+  protected:
+    void SetUp() override { mod.properties.Add(core::ir::Property::kAllow16BitFloats); }
+};
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastIdentity) {
     auto* a = b.FunctionParam<i32>("a");
@@ -74,7 +75,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastIdentity) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -103,7 +104,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Asuint) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -132,7 +133,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Asint) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -161,7 +162,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Asfloat) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -190,7 +191,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, AsfloatVec) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -219,22 +220,20 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastFromF16) {
 }
 %tint_bitcast_from_f16 = func(%src:vec2<f16>):f32 {
   $B2: {
-    %6:vec2<f32> = convert %src
-    %7:vec2<u32> = hlsl.f32tof16 %6
-    %r:vec2<u32> = let %7
-    %9:u32 = swizzle %r, x
-    %10:u32 = and %9, 65535u
-    %11:u32 = swizzle %r, y
-    %12:u32 = and %11, 65535u
-    %13:u32 = shl %12, 16u
-    %14:u32 = or %10, %13
-    %15:f32 = hlsl.asfloat %14
-    ret %15
+    %6:vec2<u16> = hlsl.asuint16 %src
+    %7:vec2<u32> = convert %6
+    %8:vec2<u32> = and %7, vec2<u32>(65535u)
+    %9:vec2<u32> = shl %8, vec2<u32>(0u, 16u)
+    %10:u32 = access %9, 0u
+    %11:u32 = access %9, 1u
+    %12:u32 = or %10, %11
+    %13:f32 = hlsl.asfloat %12
+    ret %13
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -265,22 +264,18 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastToF16) {
   $B2: {
     %6:u32 = hlsl.asuint %src
     %v:u32 = let %6
-    %8:u32 = and %v, 65535u
-    %9:f32 = hlsl.f16tof32 %8
-    %t_low:f32 = let %9
-    %11:u32 = shr %v, 16u
-    %12:u32 = and %11, 65535u
-    %13:f32 = hlsl.f16tof32 %12
-    %t_high:f32 = let %13
-    %15:f16 = convert %t_low
-    %16:f16 = convert %t_high
-    %17:vec2<f16> = construct %15, %16
-    ret %17
+    %8:vec2<u32> = construct %v, %v
+    %9:vec2<u32> = shr %8, vec2<u32>(0u, 16u)
+    %10:vec2<u32> = and %9, vec2<u32>(65535u)
+    %11:vec2<u16> = convert %10
+    %v16:vec2<u16> = let %11
+    %13:vec2<f16> = hlsl.asfloat16 %v16
+    ret %13
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -296,11 +291,10 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastFromVec2F16) {
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<f16> = construct 1.0h, 2.0h
-    %a:ptr<function, vec2<f16>, read_write> = var %2
-    %4:vec2<f16> = load %a
-    %5:i32 = bitcast<i32> %4
-    %b:i32 = let %5
+    %a:ptr<function, vec2<f16>, read_write> = var vec2<f16>(1.0h, 2.0h)
+    %3:vec2<f16> = load %a
+    %4:i32 = bitcast<i32> %3
+    %b:i32 = let %4
     ret
   }
 }
@@ -310,32 +304,29 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastFromVec2F16) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<f16> = construct 1.0h, 2.0h
-    %a:ptr<function, vec2<f16>, read_write> = var %2
-    %4:vec2<f16> = load %a
-    %5:i32 = call %tint_bitcast_from_f16, %4
-    %b:i32 = let %5
+    %a:ptr<function, vec2<f16>, read_write> = var vec2<f16>(1.0h, 2.0h)
+    %3:vec2<f16> = load %a
+    %4:i32 = call %tint_bitcast_from_f16, %3
+    %b:i32 = let %4
     ret
   }
 }
 %tint_bitcast_from_f16 = func(%src:vec2<f16>):i32 {
   $B2: {
-    %9:vec2<f32> = convert %src
-    %10:vec2<u32> = hlsl.f32tof16 %9
-    %r:vec2<u32> = let %10
-    %12:u32 = swizzle %r, x
-    %13:u32 = and %12, 65535u
-    %14:u32 = swizzle %r, y
-    %15:u32 = and %14, 65535u
-    %16:u32 = shl %15, 16u
-    %17:u32 = or %13, %16
-    %18:i32 = hlsl.asint %17
-    ret %18
+    %8:vec2<u16> = hlsl.asuint16 %src
+    %9:vec2<u32> = convert %8
+    %10:vec2<u32> = and %9, vec2<u32>(65535u)
+    %11:vec2<u32> = shl %10, vec2<u32>(0u, 16u)
+    %12:u32 = access %11, 0u
+    %13:u32 = access %11, 1u
+    %14:u32 = or %12, %13
+    %15:i32 = hlsl.asint %14
+    ret %15
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -350,11 +341,10 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastToVec4F16) {
     auto* src = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<i32> = construct 1i, 2i
-    %a:ptr<function, vec2<i32>, read_write> = var %2
-    %4:vec2<i32> = load %a
-    %5:vec4<f16> = bitcast<vec4<f16>> %4
-    %b:vec4<f16> = let %5
+    %a:ptr<function, vec2<i32>, read_write> = var vec2<i32>(1i, 2i)
+    %3:vec2<i32> = load %a
+    %4:vec4<f16> = bitcast<vec4<f16>> %3
+    %b:vec4<f16> = let %4
     ret
   }
 }
@@ -364,48 +354,35 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastToVec4F16) {
     auto* expect = R"(
 %foo = @fragment func():void {
   $B1: {
-    %2:vec2<i32> = construct 1i, 2i
-    %a:ptr<function, vec2<i32>, read_write> = var %2
-    %4:vec2<i32> = load %a
-    %5:vec4<f16> = call %tint_bitcast_to_f16, %4
-    %b:vec4<f16> = let %5
+    %a:ptr<function, vec2<i32>, read_write> = var vec2<i32>(1i, 2i)
+    %3:vec2<i32> = load %a
+    %4:vec4<f16> = call %tint_bitcast_to_f16, %3
+    %b:vec4<f16> = let %4
     ret
   }
 }
 %tint_bitcast_to_f16 = func(%src:vec2<i32>):vec4<f16> {
   $B2: {
-    %9:vec2<u32> = hlsl.asuint %src
-    %v:vec2<u32> = let %9
-    %mask:vec2<u32> = let vec2<u32>(65535u)
-    %shift:vec2<u32> = let vec2<u32>(16u)
-    %13:vec2<u32> = and %v, %mask
-    %14:vec2<f32> = hlsl.f16tof32 %13
-    %t_low:vec2<f32> = let %14
-    %16:vec2<u32> = shr %v, %shift
-    %17:vec2<u32> = and %16, %mask
-    %18:vec2<f32> = hlsl.f16tof32 %17
-    %t_high:vec2<f32> = let %18
-    %20:f32 = swizzle %t_low, x
-    %21:f32 = swizzle %t_high, x
-    %22:f16 = convert %20
-    %23:f16 = convert %21
-    %24:f32 = swizzle %t_low, y
-    %25:f16 = convert %24
-    %26:f32 = swizzle %t_high, y
-    %27:f16 = convert %26
-    %28:vec4<f16> = construct %22, %23, %25, %27
-    ret %28
+    %8:vec2<u32> = hlsl.asuint %src
+    %v:vec2<u32> = let %8
+    %10:vec4<u32> = swizzle %v, xxyy
+    %11:vec4<u32> = shr %10, vec4<u32>(0u, 16u, 0u, 16u)
+    %12:vec4<u32> = and %11, vec4<u32>(65535u)
+    %13:vec4<u16> = convert %12
+    %v16:vec4<u16> = let %13
+    %15:vec4<f16> = hlsl.asfloat16 %v16
+    ret %15
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 // Test bitcast from f16 to u16 scalar — should use asuint16.
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastF16ToU16) {
-    capabilities.Add(Capability::kAllow16BitIntegers);
+    mod.properties.Add(core::ir::Property::kAllow16BitIntegers);
     auto* a = b.FunctionParam("a", ty.f16());
     auto* func = b.Function("foo", ty.u16());
     func->SetParams({a});
@@ -430,13 +407,13 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastF16ToU16) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 // Test bitcast from u16 to f16 scalar — should use asfloat16.
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastU16ToF16) {
-    capabilities.Add(Capability::kAllow16BitIntegers);
+    mod.properties.Add(core::ir::Property::kAllow16BitIntegers);
     auto* a = b.FunctionParam("a", ty.u16());
     auto* func = b.Function("foo", ty.f16());
     func->SetParams({a});
@@ -461,12 +438,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastU16ToF16) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastVec2U16ToVec2F16) {
-    capabilities.Add(Capability::kAllow16BitIntegers);
+    mod.properties.Add(core::ir::Property::kAllow16BitIntegers);
     auto* a = b.FunctionParam<vec2<u16>>("a");
     auto* func = b.Function("foo", ty.vec2h());
     func->SetParams({a});
@@ -491,12 +468,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastVec2U16ToVec2F16) {
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastVec2U16ToU32) {
-    capabilities.Add(Capability::kAllow16BitIntegers);
+    mod.properties.Add(core::ir::Property::kAllow16BitIntegers);
     auto* a = b.FunctionParam<vec2<u16>>("a");
     auto* func = b.Function("foo", ty.u32());
     func->SetParams({a});
@@ -521,27 +498,23 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastVec2U16ToU32) {
 }
 %tint_bitcast_from_u16 = func(%src:vec2<u16>):u32 {
   $B2: {
-    %6:vec2<f16> = hlsl.asfloat16 %src
-    %7:vec2<f32> = convert %6
-    %8:vec2<u32> = hlsl.f32tof16 %7
-    %r:vec2<u32> = let %8
-    %10:u32 = swizzle %r, x
-    %11:u32 = and %10, 65535u
-    %12:u32 = swizzle %r, y
-    %13:u32 = and %12, 65535u
-    %14:u32 = shl %13, 16u
-    %15:u32 = or %11, %14
-    ret %15
+    %6:vec2<u32> = convert %src
+    %7:vec2<u32> = and %6, vec2<u32>(65535u)
+    %8:vec2<u32> = shl %7, vec2<u32>(0u, 16u)
+    %9:u32 = access %8, 0u
+    %10:u32 = access %8, 1u
+    %11:u32 = or %9, %10
+    ret %11
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastU32ToVec2U16) {
-    capabilities.Add(Capability::kAllow16BitIntegers);
+    mod.properties.Add(core::ir::Property::kAllow16BitIntegers);
     auto* a = b.FunctionParam<u32>("a");
     auto* func = b.Function("foo", ty.vec(ty.u16(), 2));
     func->SetParams({a});
@@ -567,72 +540,69 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, BitcastU32ToVec2U16) {
 %tint_bitcast_to_u16 = func(%src:u32):vec2<u16> {
   $B2: {
     %v:u32 = let %src
-    %7:u32 = and %v, 65535u
-    %8:f32 = hlsl.f16tof32 %7
-    %t_low:f32 = let %8
-    %10:u32 = shr %v, 16u
-    %11:u32 = and %10, 65535u
-    %12:f32 = hlsl.f16tof32 %11
-    %t_high:f32 = let %12
-    %14:f16 = convert %t_low
-    %15:f16 = convert %t_high
-    %16:vec2<f16> = construct %14, %15
-    %17:vec2<u16> = hlsl.asuint16 %16
-    ret %17
+    %7:vec2<u32> = construct %v, %v
+    %8:vec2<u32> = shr %7, vec2<u32>(0u, 16u)
+    %9:vec2<u32> = and %8, vec2<u32>(65535u)
+    %10:vec2<u16> = convert %9
+    %v16:vec2<u16> = let %10
+    ret %v16
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Sign) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* arg = b.FunctionParam("arg", ty.f32());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Call(ty.f32(), core::BuiltinFn::kSign, -1_f));
+        b.Let("a", b.Call(ty.f32(), core::BuiltinFn::kSign, arg));
         b.Return(func);
     });
 
     auto* src = R"(
-%foo = @fragment func():void {
+%foo = func(%arg:f32):void {
   $B1: {
-    %2:f32 = sign -1.0f
-    %a:f32 = let %2
-    ret
-  }
-}
-)";
-    EXPECT_EQ(src, str());
-
-    auto* expect = R"(
-%foo = @fragment func():void {
-  $B1: {
-    %2:i32 = hlsl.sign -1.0f
-    %3:f32 = convert %2
+    %3:f32 = sign %arg
     %a:f32 = let %3
     ret
   }
 }
 )";
+    EXPECT_EQ(src, str());
 
-    Run(BuiltinPolyfill);
+    auto* expect = R"(
+%foo = func(%arg:f32):void {
+  $B1: {
+    %3:i32 = hlsl.sign %arg
+    %4:f32 = convert %3
+    %a:f32 = let %4
+    ret
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, SignVec) {
-    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    auto* arg = b.FunctionParam("arg", ty.vec3i());
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({arg});
     b.Append(func->Block(), [&] {
-        b.Let("a",
-              b.Call(ty.vec3i(), core::BuiltinFn::kSign, b.Composite(ty.vec3i(), 1_i, 2_i, 3_i)));
+        b.Let("a", b.Call(ty.vec3i(), core::BuiltinFn::kSign, arg));
         b.Return(func);
     });
 
     auto* src = R"(
-%foo = @fragment func():void {
+%foo = func(%arg:vec3<i32>):void {
   $B1: {
-    %2:vec3<i32> = sign vec3<i32>(1i, 2i, 3i)
-    %a:vec3<i32> = let %2
+    %3:vec3<i32> = sign %arg
+    %a:vec3<i32> = let %3
     ret
   }
 }
@@ -640,16 +610,16 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SignVec) {
     EXPECT_EQ(src, str());
 
     auto* expect = R"(
-%foo = @fragment func():void {
+%foo = func(%arg:vec3<i32>):void {
   $B1: {
-    %2:vec3<i32> = hlsl.sign vec3<i32>(1i, 2i, 3i)
-    %a:vec3<i32> = let %2
+    %3:vec3<i32> = hlsl.sign %arg
+    %a:vec3<i32> = let %3
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -686,8 +656,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureNumLevels) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -726,8 +695,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureNumLayers) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -767,8 +735,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureNumSamples) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -803,8 +770,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_1d_WithoutLod) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -831,20 +797,18 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_1d_WithI32Lod) {
     auto* expect = R"(
 %foo = func(%t:texture_1d<f32>):u32 {
   $B1: {
-    %3:u32 = convert 3i
-    %4:ptr<function, vec2<u32>, read_write> = var undef
-    %5:ptr<function, u32, read_write> = access %4, 0u
-    %6:ptr<function, u32, read_write> = access %4, 1u
-    %7:void = %t.GetDimensions %3, %5, %6
-    %8:vec2<u32> = load %4
-    %9:u32 = swizzle %8, x
-    ret %9
+    %3:ptr<function, vec2<u32>, read_write> = var undef
+    %4:ptr<function, u32, read_write> = access %3, 0u
+    %5:ptr<function, u32, read_write> = access %3, 1u
+    %6:void = %t.GetDimensions 3u, %4, %5
+    %7:vec2<u32> = load %3
+    %8:u32 = swizzle %7, x
+    ret %8
   }
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -882,8 +846,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_1d_WithU32Lod) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -920,8 +883,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_2d_WithoutLod) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -948,21 +910,19 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_2d_WithI32Lod) {
     auto* expect = R"(
 %foo = func(%t:texture_2d<f32>):vec2<u32> {
   $B1: {
-    %3:u32 = convert 3i
-    %4:ptr<function, vec3<u32>, read_write> = var undef
-    %5:ptr<function, u32, read_write> = access %4, 0u
-    %6:ptr<function, u32, read_write> = access %4, 1u
-    %7:ptr<function, u32, read_write> = access %4, 2u
-    %8:void = %t.GetDimensions %3, %5, %6, %7
-    %9:vec3<u32> = load %4
-    %10:vec2<u32> = swizzle %9, xy
-    ret %10
+    %3:ptr<function, vec3<u32>, read_write> = var undef
+    %4:ptr<function, u32, read_write> = access %3, 0u
+    %5:ptr<function, u32, read_write> = access %3, 1u
+    %6:ptr<function, u32, read_write> = access %3, 2u
+    %7:void = %t.GetDimensions 3u, %4, %5, %6
+    %8:vec3<u32> = load %3
+    %9:vec2<u32> = swizzle %8, xy
+    ret %9
   }
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1000,8 +960,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureDimensions_3d) {
 }
 )";
 
-    capabilities = core::ir::Capabilities{core::ir::Capability::kAllowVectorElementPointer};
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1030,15 +989,13 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_1DF32) {
     auto* expect = R"(
 %foo = func(%t:texture_1d<f32>):vec4<f32> {
   $B1: {
-    %3:i32 = convert 0u
-    %4:vec2<i32> = construct 0i, %3
-    %5:vec4<f32> = %t.Load %4
-    ret %5
+    %3:vec4<f32> = %t.Load vec2<i32>(0i)
+    ret %3
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1067,14 +1024,13 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_2DLevelI32) {
     auto* expect = R"(
 %foo = func(%t:texture_2d<i32>):vec4<i32> {
   $B1: {
-    %3:vec3<i32> = construct vec2<i32>(0i), 0i
-    %4:vec4<i32> = %t.Load %3
-    ret %4
+    %3:vec4<i32> = %t.Load vec3<i32>(0i)
+    ret %3
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1103,15 +1059,13 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_3DLevelU32) {
     auto* expect = R"(
 %foo = func(%t:texture_3d<f32>):vec4<f32> {
   $B1: {
-    %3:i32 = convert 0u
-    %4:vec4<i32> = construct vec3<i32>(0i), %3
-    %5:vec4<f32> = %t.Load %4
-    ret %5
+    %3:vec4<f32> = %t.Load vec4<i32>(0i)
+    ret %3
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1141,14 +1095,13 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_Multisampled2DI32) {
     auto* expect = R"(
 %foo = func(%t:texture_multisampled_2d<i32>):vec4<i32> {
   $B1: {
-    %3:i32 = convert 0u
-    %4:vec4<i32> = %t.Load vec2<i32>(0i), %3
-    ret %4
+    %3:vec4<i32> = %t.Load vec2<i32>(0i), 0i
+    ret %3
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1177,16 +1130,14 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_Depth2DLevelF32) {
     auto* expect = R"(
 %foo = func(%t:texture_depth_2d):f32 {
   $B1: {
-    %3:i32 = convert 0u
-    %4:vec3<i32> = construct vec2<i32>(0i), %3
-    %5:vec4<f32> = %t.Load %4
-    %6:f32 = swizzle %5, x
-    ret %6
+    %3:vec4<f32> = %t.Load vec3<i32>(0i)
+    %4:f32 = swizzle %3, x
+    ret %4
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1216,17 +1167,14 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_Depth2DArrayLevelF32) {
     auto* expect = R"(
 %foo = func(%t:texture_depth_2d_array):f32 {
   $B1: {
-    %3:i32 = convert 0u
-    %4:i32 = convert 0u
-    %5:vec4<i32> = construct vec2<i32>(0i), %3, %4
-    %6:vec4<f32> = %t.Load %5
-    %7:f32 = swizzle %6, x
-    ret %7
+    %3:vec4<f32> = %t.Load vec4<i32>(0i)
+    %4:f32 = swizzle %3, x
+    ret %4
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1256,15 +1204,14 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, TextureLoad_DepthMultisampledF32) {
     auto* expect = R"(
 %foo = func(%t:texture_depth_multisampled_2d):f32 {
   $B1: {
-    %3:i32 = convert 0u
-    %4:vec4<f32> = %t.Load vec2<i32>(0i), %3
-    %5:f32 = swizzle %4, x
-    ret %5
+    %3:vec4<f32> = %t.Load vec2<i32>(0i), 0i
+    %4:f32 = swizzle %3, x
+    ret %4
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1313,7 +1260,7 @@ $B1: {  # root
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1362,7 +1309,7 @@ $B1: {  # root
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1405,15 +1352,13 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:texture_storage_2d_array<rgba32float, read_write> = load %1
-    %4:i32 = convert 3u
-    %5:vec3<i32> = construct vec2<i32>(1i, 2i), %4
-    %6:void = hlsl.textureStore %3, %5, vec4<f32>(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f)
+    %4:void = hlsl.textureStore %3, vec3<i32>(1i, 2i, 3i), vec4<f32>(0.5f, 0.40000000596046447754f, 0.30000001192092895508f, 1.0f)
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1449,11 +1394,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1468,17 +1412,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = %5.GatherCmp %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = %4.GatherCmp %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1515,11 +1458,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1534,17 +1476,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = %5.GatherCmp %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = %4.GatherCmp %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1581,11 +1522,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 2.5f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 6u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec3<f32>(1.0f, 2.0f, 2.5f), 6u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1600,19 +1540,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 2.5f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 6u
-    %8:vec4<f32> = construct %4, %7
-    %9:vec4<f32> = %5.GatherCmp %6, %8, 3.0f
-    %x:vec4<f32> = let %9
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = %4.GatherCmp %5, vec4<f32>(1.0f, 2.0f, 2.5f, 6.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1650,11 +1587,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:vec4<f32> = textureGatherCompare %5, %6, %4, 6i, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = textureGatherCompare %4, %5, vec2<f32>(1.0f, 2.0f), 6i, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1669,19 +1605,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 6i
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.GatherCmp %6, %8, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:vec4<f32> = %4.GatherCmp %5, vec3<f32>(1.0f, 2.0f, 6.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1716,11 +1649,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 3u, %5, %6, %4
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 3u, %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1735,17 +1667,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = %5.GatherAlpha %6, %4
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = %4.GatherAlpha %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<i32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1780,11 +1711,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 0u, %5, %6, %4, vec2<i32>(1i, 3i)
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 0u, %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(1i, 3i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1799,17 +1729,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = %5.GatherRed %6, %4, vec2<i32>(1i, 3i)
-    %x:vec4<i32> = let %7
+    %4:texture_2d<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = %4.GatherRed %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(1i, 3i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1845,11 +1774,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 1u, %5, %6, %4, 1u
-    %x:vec4<i32> = let %7
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 1u, %4, %5, vec2<f32>(1.0f, 2.0f), 1u
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1864,19 +1792,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 1u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<i32> = %5.GatherGreen %6, %8
-    %x:vec4<i32> = let %9
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = %4.GatherGreen %5, vec3<f32>(1.0f, 2.0f, 1.0f)
+    %x:vec4<i32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1914,11 +1839,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:vec4<i32> = textureGather 2u, %5, %6, %4, 1i, vec2<i32>(1i, 2i)
-    %x:vec4<i32> = let %7
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = textureGather 2u, %4, %5, vec2<f32>(1.0f, 2.0f), 1i, vec2<i32>(1i, 2i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
@@ -1933,19 +1857,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<i32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 1i
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<i32> = %5.GatherBlue %6, %8, vec2<i32>(1i, 2i)
-    %x:vec4<i32> = let %9
+    %4:texture_2d_array<i32> = load %1
+    %5:sampler = load %2
+    %6:vec4<i32> = %4.GatherBlue %5, vec3<f32>(1.0f, 2.0f, 1.0f), vec2<i32>(1i, 2i)
+    %x:vec4<i32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -1979,11 +1900,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -1998,17 +1918,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Gather %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Gather %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -2042,11 +1961,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, vec2<i32>(3i, 4i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(3i, 4i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2061,17 +1979,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Gather %6, %4, vec2<i32>(3i, 4i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Gather %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(3i, 4i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -2105,11 +2022,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, 4i
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), 4i
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2124,19 +2040,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4i
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Gather %6, %8
-    %x:vec4<f32> = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Gather %5, vec3<f32>(1.0f, 2.0f, 4.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -2172,11 +2085,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureGather %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureGather %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2191,19 +2103,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Gather %6, %8, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Gather %5, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
 
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -2264,7 +2173,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2298,11 +2207,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2317,16 +2225,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec2<f32>(1.0f, 2.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2361,11 +2268,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2380,16 +2286,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2424,11 +2329,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2443,18 +2347,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 4.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2491,11 +2392,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2510,18 +2410,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2555,11 +2452,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2574,16 +2470,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2618,11 +2513,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2637,16 +2531,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2680,11 +2573,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2699,16 +2591,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 3.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2743,11 +2634,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSample %5, %6, %4, 4u
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -2762,18 +2652,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8
-    %x:vec4<f32> = let %9
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2806,11 +2693,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f)
+    %x:f32 = let %6
     ret
   }
 }
@@ -2825,17 +2711,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4
-    %8:f32 = swizzle %7, x
-    %x:f32 = let %8
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec2<f32>(1.0f, 2.0f)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2869,11 +2754,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -2888,17 +2772,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.Sample %6, %4, vec2<i32>(4i, 5i)
-    %8:f32 = swizzle %7, x
-    %x:f32 = let %8
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec2<f32>(1.0f, 2.0f), vec2<i32>(4i, 5i)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2932,11 +2815,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u
+    %x:f32 = let %6
     ret
   }
 }
@@ -2951,19 +2833,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8
-    %10:f32 = swizzle %9, x
-    %x:f32 = let %10
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 4.0f)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -2998,11 +2877,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -3017,19 +2895,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8, vec2<i32>(4i, 5i)
-    %10:f32 = swizzle %9, x
-    %x:f32 = let %10
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<i32>(4i, 5i)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3063,11 +2938,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSample %5, %6, %4, 4u
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSample %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u
+    %x:f32 = let %6
     ret
   }
 }
@@ -3082,19 +2956,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:vec4<f32> = %5.Sample %6, %8
-    %10:f32 = swizzle %9, x
-    %x:f32 = let %10
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.Sample %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3128,11 +2999,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3147,16 +3017,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleBias %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3192,11 +3061,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3211,16 +3079,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleBias %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3256,11 +3123,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3275,18 +3141,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleBias %6, %8, 3.0f
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3323,11 +3186,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3342,18 +3204,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleBias %6, %8, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3387,11 +3246,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3406,16 +3264,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleBias %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3451,11 +3308,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3470,16 +3326,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleBias %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3513,11 +3368,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3532,16 +3386,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleBias %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3577,11 +3430,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleBias %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleBias %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -3596,18 +3448,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleBias %6, %8, 3.0f
-    %x:vec4<f32> = let %9
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleBias %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3640,11 +3489,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -3659,16 +3507,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmp %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3702,11 +3549,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -3721,16 +3567,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmp %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3765,11 +3610,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -3784,18 +3628,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmp %6, %8, 3.0f
-    %x:f32 = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3831,11 +3672,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -3850,18 +3690,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmp %6, %8, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3894,11 +3731,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -3913,16 +3749,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmp %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -3957,11 +3792,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompare %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompare %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -3976,18 +3810,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmp %6, %8, 3.0f
-    %x:f32 = let %9
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmp %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4020,11 +3851,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -4039,16 +3869,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmpLevelZero %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4083,11 +3912,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -4102,16 +3930,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmpLevelZero %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4146,11 +3973,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -4165,18 +3991,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmpLevelZero %6, %8, 3.0f
-    %x:f32 = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4212,11 +4035,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -4231,18 +4053,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmpLevelZero %6, %8, 3.0f, vec2<i32>(4i, 5i)
-    %x:f32 = let %9
+    %4:texture_depth_2d_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4275,11 +4094,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -4294,16 +4112,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = %5.SampleCmpLevelZero %6, %4, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4338,11 +4155,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = textureSampleCompareLevel %5, %6, %4, 4u, 3.0f
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = textureSampleCompareLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:f32 = let %6
     ret
   }
 }
@@ -4357,18 +4173,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler_comparison = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:f32 = %5.SampleCmpLevelZero %6, %8, 3.0f
-    %x:f32 = let %9
+    %4:texture_depth_cube_array = load %1
+    %5:sampler_comparison = load %2
+    %6:f32 = %4.SampleCmpLevelZero %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:f32 = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4404,13 +4217,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4425,18 +4235,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = %7.SampleGrad %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4474,13 +4281,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4495,18 +4299,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = %7.SampleGrad %8, %4, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec2<f32>(1.0f, 2.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4544,13 +4345,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4565,20 +4363,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:f32 = convert 4u
-    %10:vec3<f32> = construct %4, %9
-    %11:vec4<f32> = %7.SampleGrad %8, %10, %5, %6
-    %x:vec4<f32> = let %11
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4617,13 +4410,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec2<f32>(1.0f, 2.0f), 4u, vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4638,20 +4428,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:vec2<f32> = construct 3.0f, 4.0f
-    %6:vec2<f32> = construct 6.0f, 7.0f
-    %7:texture_2d_array<f32> = load %1
-    %8:sampler = load %2
-    %9:f32 = convert 4u
-    %10:vec3<f32> = construct %4, %9
-    %11:vec4<f32> = %7.SampleGrad %8, %10, %5, %6, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %11
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec3<f32>(1.0f, 2.0f, 4.0f), vec2<f32>(3.0f, 4.0f), vec2<f32>(6.0f, 7.0f), vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4687,13 +4472,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4708,18 +4490,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = %7.SampleGrad %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4757,13 +4536,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4778,18 +4554,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_3d<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = %7.SampleGrad %8, %4, %5, %6, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %9
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f), vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4825,13 +4598,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4846,18 +4616,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = %7.SampleGrad %8, %4, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec3<f32>(1.0f, 2.0f, 3.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4895,13 +4662,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube_array<f32> = load %1
-    %8:sampler = load %2
-    %9:vec4<f32> = textureSampleGrad %7, %8, %4, 4u, %5, %6
-    %x:vec4<f32> = let %9
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleGrad %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -4916,20 +4680,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:vec3<f32> = construct 3.0f, 4.0f, 5.0f
-    %6:vec3<f32> = construct 6.0f, 7.0f, 8.0f
-    %7:texture_cube_array<f32> = load %1
-    %8:sampler = load %2
-    %9:f32 = convert 4u
-    %10:vec4<f32> = construct %4, %9
-    %11:vec4<f32> = %7.SampleGrad %8, %10, %5, %6
-    %x:vec4<f32> = let %11
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleGrad %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), vec3<f32>(3.0f, 4.0f, 5.0f), vec3<f32>(6.0f, 7.0f, 8.0f)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -4989,7 +4748,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5023,11 +4782,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5042,16 +4800,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleLevel %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5087,11 +4844,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5106,16 +4862,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleLevel %6, %4, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5151,11 +4906,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5170,18 +4924,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleLevel %6, %8, 3.0f
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5218,11 +4969,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %7
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5237,18 +4987,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_2d_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleLevel %6, %8, 3.0f, vec2<i32>(4i, 5i)
-    %x:vec4<f32> = let %9
+    %4:texture_2d_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5282,11 +5029,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5301,16 +5047,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleLevel %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5346,11 +5091,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5365,16 +5109,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_3d<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleLevel %6, %4, 3.0f, vec3<i32>(4i, 5i, 6i)
-    %x:vec4<f32> = let %7
+    %4:texture_3d<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f, vec3<i32>(4i, 5i, 6i)
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5408,11 +5151,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5427,16 +5169,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = %5.SampleLevel %6, %4, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 3.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5472,11 +5213,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:vec4<f32> = textureSampleLevel %5, %6, %4, 4u, 3.0f
-    %x:vec4<f32> = let %7
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
@@ -5491,18 +5231,15 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_cube_array<f32> = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:vec4<f32> = %5.SampleLevel %6, %8, 3.0f
-    %x:vec4<f32> = let %9
+    %4:texture_cube_array<f32> = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %x:vec4<f32> = let %6
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5535,11 +5272,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 3i
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -5554,18 +5290,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 3i
-    %8:vec4<f32> = %5.SampleLevel %6, %4, %7
-    %9:f32 = swizzle %8, x
-    %x:f32 = let %9
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec2<f32>(1.0f, 2.0f), 3.0f
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5599,11 +5333,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 3u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 3u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5618,18 +5351,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 3u
-    %8:vec4<f32> = %5.SampleLevel %6, %4, %7, vec2<i32>(4i, 5i)
-    %9:f32 = swizzle %8, x
-    %x:f32 = let %9
+    %4:texture_depth_2d = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec2<f32>(1.0f, 2.0f), 3.0f, vec2<i32>(4i, 5i)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5663,11 +5394,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3i
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -5682,20 +5412,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = convert 3i
-    %10:vec4<f32> = %5.SampleLevel %6, %8, %9
-    %11:f32 = swizzle %10, x
-    %x:f32 = let %11
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5731,11 +5457,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3u, vec2<i32>(4i, 5i)
-    %x:f32 = let %7
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec2<f32>(1.0f, 2.0f), 4u, 3u, vec2<i32>(4i, 5i)
+    %x:f32 = let %6
     ret
   }
 }
@@ -5750,20 +5475,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec2<f32> = construct 1.0f, 2.0f
-    %5:texture_depth_2d_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec3<f32> = construct %4, %7
-    %9:f32 = convert 3u
-    %10:vec4<f32> = %5.SampleLevel %6, %8, %9, vec2<i32>(4i, 5i)
-    %11:f32 = swizzle %10, x
-    %x:f32 = let %11
+    %4:texture_depth_2d_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec3<f32>(1.0f, 2.0f, 4.0f), 3.0f, vec2<i32>(4i, 5i)
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5797,11 +5518,10 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = textureSampleLevel %5, %6, %4, 4u, 3i
-    %x:f32 = let %7
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:f32 = textureSampleLevel %4, %5, vec3<f32>(1.0f, 2.0f, 3.0f), 4u, 3i
+    %x:f32 = let %6
     ret
   }
 }
@@ -5816,20 +5536,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %4:vec3<f32> = construct 1.0f, 2.0f, 3.0f
-    %5:texture_depth_cube_array = load %1
-    %6:sampler = load %2
-    %7:f32 = convert 4u
-    %8:vec4<f32> = construct %4, %7
-    %9:f32 = convert 3i
-    %10:vec4<f32> = %5.SampleLevel %6, %8, %9
-    %11:f32 = swizzle %10, x
-    %x:f32 = let %11
+    %4:texture_depth_cube_array = load %1
+    %5:sampler = load %2
+    %6:vec4<f32> = %4.SampleLevel %5, vec4<f32>(1.0f, 2.0f, 3.0f, 4.0f), 3.0f
+    %7:f32 = swizzle %6, x
+    %x:f32 = let %7
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5866,7 +5582,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, QuantizeToF16) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5923,7 +5639,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -5997,7 +5713,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6062,7 +5778,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6125,21 +5841,19 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, atomic<i32>, read_write> = access %v, 1u
     %4:ptr<function, i32, read_write> = var 0i
-    %5:i32 = sub 0i, 123i
-    %6:void = hlsl.InterlockedAdd %3, %5, %4
-    %7:i32 = load %4
-    %x:i32 = let %7
-    %9:ptr<workgroup, atomic<u32>, read_write> = access %v, 2u
-    %10:ptr<function, u32, read_write> = var 0u
-    %11:u32 = sub 0u, 123u
-    %12:void = hlsl.InterlockedAdd %9, %11, %10
-    %13:u32 = load %10
-    %y:u32 = let %13
+    %5:void = hlsl.InterlockedAdd %3, -123i, %4
+    %6:i32 = load %4
+    %x:i32 = let %6
+    %8:ptr<workgroup, atomic<u32>, read_write> = access %v, 2u
+    %9:ptr<function, u32, read_write> = var 0u
+    %10:void = hlsl.InterlockedAdd %8, 4294967173u, %9
+    %11:u32 = load %9
+    %y:u32 = let %11
     ret
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6218,7 +5932,7 @@ $B1: {  # root
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6259,7 +5973,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack2x16Float) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6298,7 +6012,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack2x16Float) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6344,7 +6058,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack2x16Snorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6387,7 +6101,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack2x16snorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6431,7 +6145,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack2x16unorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6472,7 +6186,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack2x16unorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6524,7 +6238,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4x8Snorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6569,7 +6283,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4x8Snorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6619,7 +6333,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4x8Unorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6664,16 +6378,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4x8Unorm) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xI8) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
@@ -6706,16 +6416,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xI8) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4xI8) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
@@ -6748,16 +6454,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4xI8) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xU8) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", b.Splat(ty.vec4u(), 2_u));
@@ -6790,16 +6492,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xU8) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4xU8) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", 2_u);
@@ -6832,7 +6530,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Unpack4xU8) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6869,7 +6567,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Dot4U8Packed) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
@@ -6907,16 +6605,12 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Dot4I8Packed) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
 
     EXPECT_EQ(expect, str());
 }
 
 TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xI8Clamp) {
-    capabilities = core::ir::Capabilities{
-        core::ir::Capability::kAllowNonCoreTypes,
-    };
-
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* u = b.Var("u", b.Splat(ty.vec4i(), 2_i));
@@ -6949,7 +6643,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Pack4xI8Clamp) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -6989,7 +6683,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Asinh) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7029,7 +6723,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Acosh) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7069,7 +6763,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, Atanh) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7107,7 +6801,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, CountOneBits) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7145,7 +6839,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, ReverseBits) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7180,7 +6874,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupAndLiteralVec) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7213,7 +6907,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupShuffleXor) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7249,7 +6943,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupInclusiveAdd) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7285,7 +6979,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupInclusiveMul) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7318,7 +7012,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupShuffleUp) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7351,7 +7045,7 @@ TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupShuffleDown) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7403,7 +7097,7 @@ __modf_result_f32 = struct @align(4) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7455,7 +7149,7 @@ __modf_result_vec3_f32 = struct @align(16) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7511,7 +7205,7 @@ __frexp_result_f32 = struct @align(4) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
     EXPECT_EQ(expect, str());
 }
 
@@ -7567,7 +7261,1271 @@ __frexp_result_vec3_f32 = struct @align(16) {
   }
 }
 )";
-    Run(BuiltinPolyfill);
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, Select_2018) {
+    auto* f = b.FunctionParam<f32>("f");
+    auto* t = b.FunctionParam<f32>("t");
+    auto* cond = b.FunctionParam<bool>("cond");
+    auto* func = b.Function("foo", ty.f32());
+    func->SetParams({f, t, cond});
+    b.Append(func->Block(), [&] {  //
+        b.Return(func, b.Call(ty.f32(), core::BuiltinFn::kSelect, f, t, cond));
+    });
+
+    auto* src = R"(
+%foo = func(%f:f32, %t:f32, %cond:bool):f32 {
+  $B1: {
+    %5:f32 = select %f, %t, %cond
+    ret %5
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%f:f32, %t:f32, %cond:bool):f32 {
+  $B1: {
+    %5:f32 = hlsl.ternary %f, %t, %cond
+    ret %5
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.use_hlsl_2021_select = false});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, Select_2021) {
+    auto* f = b.FunctionParam<f32>("f");
+    auto* t = b.FunctionParam<f32>("t");
+    auto* cond = b.FunctionParam<bool>("cond");
+    auto* func = b.Function("foo", ty.f32());
+    func->SetParams({f, t, cond});
+    b.Append(func->Block(), [&] {  //
+        b.Return(func, b.Call(ty.f32(), core::BuiltinFn::kSelect, f, t, cond));
+    });
+
+    auto* src = R"(
+%foo = func(%f:f32, %t:f32, %cond:bool):f32 {
+  $B1: {
+    %5:f32 = select %f, %t, %cond
+    ret %5
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%f:f32, %t:f32, %cond:bool):f32 {
+  $B1: {
+    %5:f32 = hlsl.select %cond, %t, %f
+    ret %5
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.use_hlsl_2021_select = true});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, PolyfillF16Ceil) {
+    auto* value = b.FunctionParam<f16>("value");
+    auto* func = b.Function("foo", ty.f16());
+    func->SetParams({value});
+    b.Append(func->Block(),
+             [&] { b.Return(func, b.Call(ty.f16(), core::BuiltinFn::kCeil, value)); });
+
+    auto* src = R"(
+%foo = func(%value:f16):f16 {
+  $B1: {
+    %3:f16 = ceil %value
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.polyfill_f16_ceil_floor = true});
+
+    auto* expect = R"(
+%foo = func(%value:f16):f16 {
+  $B1: {
+    %3:f32 = convert %value
+    %4:f32 = trunc %3
+    %5:f32 = add %4, 1.0f
+    %6:bool = gt %3, %4
+    %7:f32 = hlsl.ternary %4, %5, %6
+    %8:f16 = convert %7
+    %9:bool = eq %value, 0.0h
+    %10:f16 = hlsl.ternary %8, %value, %9
+    ret %10
+  }
+}
+)";
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, PolyfillVecF16Floor) {
+    auto* value = b.FunctionParam<vec3<f16>>("value");
+    auto* func = b.Function("foo", ty.vec3<f16>());
+    func->SetParams({value});
+    b.Append(func->Block(),
+             [&] { b.Return(func, b.Call(ty.vec3<f16>(), core::BuiltinFn::kFloor, value)); });
+
+    auto* src = R"(
+%foo = func(%value:vec3<f16>):vec3<f16> {
+  $B1: {
+    %3:vec3<f16> = floor %value
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.polyfill_f16_ceil_floor = true});
+
+    auto* expect = R"(
+%foo = func(%value:vec3<f16>):vec3<f16> {
+  $B1: {
+    %3:vec3<f32> = convert %value
+    %4:vec3<f32> = trunc %3
+    %5:vec3<f32> = sub %4, vec3<f32>(1.0f)
+    %6:vec3<bool> = lt %3, %4
+    %7:vec3<f32> = hlsl.ternary %4, %5, %6
+    %8:vec3<f16> = convert %7
+    %9:vec3<bool> = eq %value, vec3<f16>(0.0h)
+    %10:vec3<f16> = hlsl.ternary %8, %value, %9
+    ret %10
+  }
+}
+)";
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, Trunc) {
+    auto* a = b.FunctionParam<f32>("a");
+    auto* func = b.Function("foo", ty.f32());
+    func->SetParams({a});
+    b.Append(func->Block(), [&] { b.Return(func, b.Call(ty.f32(), core::BuiltinFn::kTrunc, a)); });
+
+    auto* src = R"(
+%foo = func(%a:f32):f32 {
+  $B1: {
+    %3:f32 = trunc %a
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:f32):f32 {
+  $B1: {
+    %3:f32 = floor %a
+    %4:f32 = ceil %a
+    %5:bool = lt %a, 0.0f
+    %6:f32 = hlsl.ternary %3, %4, %5
+    ret %6
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.polyfill_trunc = true});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, Trunc_NoPolyfill) {
+    auto* a = b.FunctionParam<f32>("a");
+    auto* func = b.Function("foo", ty.f32());
+    func->SetParams({a});
+    b.Append(func->Block(), [&] { b.Return(func, b.Call(ty.f32(), core::BuiltinFn::kTrunc, a)); });
+
+    auto* src = R"(
+%foo = func(%a:f32):f32 {
+  $B1: {
+    %3:f32 = trunc %a
+    ret %3
+  }
+}
+)";
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:f32):f32 {
+  $B1: {
+    %3:f32 = trunc %a
+    ret %3
+  }
+}
+)";
+
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{.polyfill_trunc = false});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixMultiply_F32) {
+    auto* left = b.FunctionParam("left", ty.subgroup_matrix_left(ty.f32(), 4, 8));
+    auto* right = b.FunctionParam("right", ty.subgroup_matrix_right(ty.f32(), 8, 4));
+    auto* result = ty.subgroup_matrix_result(ty.f32(), 8, 8);
+    auto* func = b.Function("foo", result);
+    func->SetParams({left, right});
+    b.Append(func->Block(), [&] {
+        auto* call = b.CallExplicit(result, core::BuiltinFn::kSubgroupMatrixMultiply,
+                                    Vector<core::ir::TemplateParameter, 1>{ty.f32()}, left, right);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%left:subgroup_matrix_left<f32, 4, 8>, %right:subgroup_matrix_right<f32, 8, 4>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %4:subgroup_matrix_result<f32, 8, 8> = subgroupMatrixMultiply<f32> %left, %right
+    ret %4
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%left:subgroup_matrix_left<f32, 4, 8>, %right:subgroup_matrix_right<f32, 8, 4>):subgroup_matrix_result<f32, 8, 8> {
+  $B1: {
+    %4:subgroup_matrix_result<f32, 8, 8> = hlsl.Multiply<f32> %left, %right
+    ret %4
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarAdd_F32) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* func = b.Function("foo", mat_ty);
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* s = b.FunctionParam("s", ty.f32());
+    func->SetParams({m, s});
+
+    b.Append(func->Block(), [&] {
+        auto* call = b.Call(mat_ty, core::BuiltinFn::kSubgroupMatrixScalarAdd, m, s);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixScalarAdd %m, %s
+    ret %4
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = call %tint_subgroup_matrix_scalar_op, %m, %s
+    ret %4
+  }
+}
+%tint_subgroup_matrix_scalar_op = func(%m_1:subgroup_matrix_left<f32, 4, 4>, %s_1:f32):subgroup_matrix_left<f32, 4, 4> {  # %m_1: 'm', %s_1: 's'
+  $B2: {
+    %result:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var %m_1
+    %9:u32 = %result.Length
+    loop [i: $B3, b: $B4, c: $B5] {  # loop_1
+      $B3: {  # initializer
+        next_iteration 0u  # -> $B4
+      }
+      $B4 (%idx:u32): {  # body
+        %11:bool = gte %idx, %9
+        if %11 [t: $B6] {  # if_1
+          $B6: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %12:subgroup_matrix_left<f32, 4, 4> = load %result
+        %13:f32 = %12.Get %idx
+        %14:f32 = add %13, %s_1
+        %15:void = %result.Set %idx, %14
+        continue  # -> $B5
+      }
+      $B5: {  # continuing
+        %16:u32 = add %idx, 1u
+        next_iteration %16  # -> $B4
+      }
+    }
+    %17:subgroup_matrix_left<f32, 4, 4> = load %result
+    ret %17
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarAdd_Deduplication) {
+    auto* mat_f32 = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* mat_i32 = ty.subgroup_matrix_left(ty.i32(), 4, 4);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* m1 = b.Var(ty.ptr<function>(mat_f32));
+        auto* m2 = b.Var(ty.ptr<function>(mat_i32));
+
+        b.Call(mat_f32, core::BuiltinFn::kSubgroupMatrixScalarAdd, b.Load(m1), 1_f);
+        b.Call(mat_f32, core::BuiltinFn::kSubgroupMatrixScalarAdd, b.Load(m1), 2_f);
+
+        b.Call(mat_i32, core::BuiltinFn::kSubgroupMatrixScalarAdd, b.Load(m2), 1_i);
+        b.Call(mat_i32, core::BuiltinFn::kSubgroupMatrixScalarAdd, b.Load(m2), 2_i);
+
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func():void {
+  $B1: {
+    %2:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var undef
+    %3:ptr<function, subgroup_matrix_left<i32, 4, 4>, read_write> = var undef
+    %4:subgroup_matrix_left<f32, 4, 4> = load %2
+    %5:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixScalarAdd %4, 1.0f
+    %6:subgroup_matrix_left<f32, 4, 4> = load %2
+    %7:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixScalarAdd %6, 2.0f
+    %8:subgroup_matrix_left<i32, 4, 4> = load %3
+    %9:subgroup_matrix_left<i32, 4, 4> = subgroupMatrixScalarAdd %8, 1i
+    %10:subgroup_matrix_left<i32, 4, 4> = load %3
+    %11:subgroup_matrix_left<i32, 4, 4> = subgroupMatrixScalarAdd %10, 2i
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func():void {
+  $B1: {
+    %2:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var undef
+    %3:ptr<function, subgroup_matrix_left<i32, 4, 4>, read_write> = var undef
+    %4:subgroup_matrix_left<f32, 4, 4> = load %2
+    %5:subgroup_matrix_left<f32, 4, 4> = call %tint_subgroup_matrix_scalar_op, %4, 1.0f
+    %7:subgroup_matrix_left<f32, 4, 4> = load %2
+    %8:subgroup_matrix_left<f32, 4, 4> = call %tint_subgroup_matrix_scalar_op, %7, 2.0f
+    %9:subgroup_matrix_left<i32, 4, 4> = load %3
+    %10:subgroup_matrix_left<i32, 4, 4> = call %tint_subgroup_matrix_scalar_op_1, %9, 1i
+    %12:subgroup_matrix_left<i32, 4, 4> = load %3
+    %13:subgroup_matrix_left<i32, 4, 4> = call %tint_subgroup_matrix_scalar_op_1, %12, 2i
+    ret
+  }
+}
+%tint_subgroup_matrix_scalar_op = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %result:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var %m
+    %17:u32 = %result.Length
+    loop [i: $B3, b: $B4, c: $B5] {  # loop_1
+      $B3: {  # initializer
+        next_iteration 0u  # -> $B4
+      }
+      $B4 (%idx:u32): {  # body
+        %19:bool = gte %idx, %17
+        if %19 [t: $B6] {  # if_1
+          $B6: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %20:subgroup_matrix_left<f32, 4, 4> = load %result
+        %21:f32 = %20.Get %idx
+        %22:f32 = add %21, %s
+        %23:void = %result.Set %idx, %22
+        continue  # -> $B5
+      }
+      $B5: {  # continuing
+        %24:u32 = add %idx, 1u
+        next_iteration %24  # -> $B4
+      }
+    }
+    %25:subgroup_matrix_left<f32, 4, 4> = load %result
+    ret %25
+  }
+}
+%tint_subgroup_matrix_scalar_op_1 = func(%m_1:subgroup_matrix_left<i32, 4, 4>, %s_1:i32):subgroup_matrix_left<i32, 4, 4> {  # %m_1: 'm', %s_1: 's'
+  $B7: {
+    %result_1:ptr<function, subgroup_matrix_left<i32, 4, 4>, read_write> = var %m_1  # %result_1: 'result'
+    %29:u32 = %result_1.Length
+    loop [i: $B8, b: $B9, c: $B10] {  # loop_2
+      $B8: {  # initializer
+        next_iteration 0u  # -> $B9
+      }
+      $B9 (%idx_1:u32): {  # body
+        %31:bool = gte %idx_1, %29
+        if %31 [t: $B11] {  # if_2
+          $B11: {  # true
+            exit_loop  # loop_2
+          }
+        }
+        %32:subgroup_matrix_left<i32, 4, 4> = load %result_1
+        %33:i32 = %32.Get %idx_1
+        %34:i32 = add %33, %s_1
+        %35:void = %result_1.Set %idx_1, %34
+        continue  # -> $B10
+      }
+      $B10: {  # continuing
+        %36:u32 = add %idx_1, 1u
+        next_iteration %36  # -> $B9
+      }
+    }
+    %37:subgroup_matrix_left<i32, 4, 4> = load %result_1
+    ret %37
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarAdd_I8) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.i8(), 4, 4);
+    auto* func = b.Function("foo", mat_ty);
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* s = b.FunctionParam("s", ty.i32());
+    func->SetParams({m, s});
+
+    b.Append(func->Block(), [&] {
+        auto* call = b.Call(mat_ty, core::BuiltinFn::kSubgroupMatrixScalarAdd, m, s);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%m:subgroup_matrix_left<i8, 4, 4>, %s:i32):subgroup_matrix_left<i8, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<i8, 4, 4> = subgroupMatrixScalarAdd %m, %s
+    ret %4
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%m:subgroup_matrix_left<i8, 4, 4>, %s:i32):subgroup_matrix_left<i8, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<i8, 4, 4> = call %tint_subgroup_matrix_scalar_op, %m, %s
+    ret %4
+  }
+}
+%tint_subgroup_matrix_scalar_op = func(%m_1:subgroup_matrix_left<i8, 4, 4>, %s_1:i32):subgroup_matrix_left<i8, 4, 4> {  # %m_1: 'm', %s_1: 's'
+  $B2: {
+    %8:subgroup_matrix_left<i32, 4, 4> = %m_1.Cast<i32>
+    %result:ptr<function, subgroup_matrix_left<i32, 4, 4>, read_write> = var %8
+    %10:u32 = %result.Length
+    loop [i: $B3, b: $B4, c: $B5] {  # loop_1
+      $B3: {  # initializer
+        next_iteration 0u  # -> $B4
+      }
+      $B4 (%idx:u32): {  # body
+        %12:bool = gte %idx, %10
+        if %12 [t: $B6] {  # if_1
+          $B6: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %13:subgroup_matrix_left<i32, 4, 4> = load %result
+        %14:i32 = %13.Get %idx
+        %15:i32 = add %14, %s_1
+        %16:void = %result.Set %idx, %15
+        continue  # -> $B5
+      }
+      $B5: {  # continuing
+        %17:u32 = add %idx, 1u
+        next_iteration %17  # -> $B4
+      }
+    }
+    %18:subgroup_matrix_left<i32, 4, 4> = load %result
+    %19:subgroup_matrix_left<i8, 4, 4> = %18.Cast<i8>
+    ret %19
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarSubtract_F32) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* func = b.Function("foo", mat_ty);
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* s = b.FunctionParam("s", ty.f32());
+    func->SetParams({m, s});
+
+    b.Append(func->Block(), [&] {
+        auto* call = b.Call(mat_ty, core::BuiltinFn::kSubgroupMatrixScalarSubtract, m, s);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixScalarSubtract %m, %s
+    ret %4
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = call %tint_subgroup_matrix_scalar_op, %m, %s
+    ret %4
+  }
+}
+%tint_subgroup_matrix_scalar_op = func(%m_1:subgroup_matrix_left<f32, 4, 4>, %s_1:f32):subgroup_matrix_left<f32, 4, 4> {  # %m_1: 'm', %s_1: 's'
+  $B2: {
+    %result:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var %m_1
+    %9:u32 = %result.Length
+    loop [i: $B3, b: $B4, c: $B5] {  # loop_1
+      $B3: {  # initializer
+        next_iteration 0u  # -> $B4
+      }
+      $B4 (%idx:u32): {  # body
+        %11:bool = gte %idx, %9
+        if %11 [t: $B6] {  # if_1
+          $B6: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %12:subgroup_matrix_left<f32, 4, 4> = load %result
+        %13:f32 = %12.Get %idx
+        %14:f32 = sub %13, %s_1
+        %15:void = %result.Set %idx, %14
+        continue  # -> $B5
+      }
+      $B5: {  # continuing
+        %16:u32 = add %idx, 1u
+        next_iteration %16  # -> $B4
+      }
+    }
+    %17:subgroup_matrix_left<f32, 4, 4> = load %result
+    ret %17
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixScalarMultiply_F32) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* func = b.Function("foo", mat_ty);
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* s = b.FunctionParam("s", ty.f32());
+    func->SetParams({m, s});
+
+    b.Append(func->Block(), [&] {
+        auto* call = b.Call(mat_ty, core::BuiltinFn::kSubgroupMatrixScalarMultiply, m, s);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixScalarMultiply %m, %s
+    ret %4
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%m:subgroup_matrix_left<f32, 4, 4>, %s:f32):subgroup_matrix_left<f32, 4, 4> {
+  $B1: {
+    %4:subgroup_matrix_left<f32, 4, 4> = call %tint_subgroup_matrix_scalar_op, %m, %s
+    ret %4
+  }
+}
+%tint_subgroup_matrix_scalar_op = func(%m_1:subgroup_matrix_left<f32, 4, 4>, %s_1:f32):subgroup_matrix_left<f32, 4, 4> {  # %m_1: 'm', %s_1: 's'
+  $B2: {
+    %result:ptr<function, subgroup_matrix_left<f32, 4, 4>, read_write> = var %m_1
+    %9:u32 = %result.Length
+    loop [i: $B3, b: $B4, c: $B5] {  # loop_1
+      $B3: {  # initializer
+        next_iteration 0u  # -> $B4
+      }
+      $B4 (%idx:u32): {  # body
+        %11:bool = gte %idx, %9
+        if %11 [t: $B6] {  # if_1
+          $B6: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %12:subgroup_matrix_left<f32, 4, 4> = load %result
+        %13:f32 = %12.Get %idx
+        %14:f32 = mul %13, %s_1
+        %15:void = %result.Set %idx, %14
+        continue  # -> $B5
+      }
+      $B5: {  # continuing
+        %16:u32 = add %idx, 1u
+        next_iteration %16  # -> $B4
+      }
+    }
+    %17:subgroup_matrix_left<f32, 4, 4> = load %result
+    ret %17
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixMultiplyAccumulate_F32) {
+    auto* left = b.FunctionParam("left", ty.subgroup_matrix_left(ty.f32(), 4, 4));
+    auto* right = b.FunctionParam("right", ty.subgroup_matrix_right(ty.f32(), 4, 4));
+    auto* acc = b.FunctionParam("acc", ty.subgroup_matrix_result(ty.f32(), 4, 4));
+    auto* result = ty.subgroup_matrix_result(ty.f32(), 4, 4);
+    auto* func = b.Function("foo", result);
+    func->SetParams({left, right, acc});
+    b.Append(func->Block(), [&] {
+        auto* call =
+            b.Call(result, core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate, left, right, acc);
+        b.Return(func, call);
+    });
+
+    auto* src = R"(
+%foo = func(%left:subgroup_matrix_left<f32, 4, 4>, %right:subgroup_matrix_right<f32, 4, 4>, %acc:subgroup_matrix_result<f32, 4, 4>):subgroup_matrix_result<f32, 4, 4> {
+  $B1: {
+    %5:subgroup_matrix_result<f32, 4, 4> = subgroupMatrixMultiplyAccumulate %left, %right, %acc
+    ret %5
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%left:subgroup_matrix_left<f32, 4, 4>, %right:subgroup_matrix_right<f32, 4, 4>, %acc:subgroup_matrix_result<f32, 4, 4>):subgroup_matrix_result<f32, 4, 4> {
+  $B1: {
+    %5:subgroup_matrix_result<f32, 4, 4> = call %tint_MatrixMultiplyAccumulate, %left, %right, %acc
+    ret %5
+  }
+}
+%tint_MatrixMultiplyAccumulate = func(%a:subgroup_matrix_left<f32, 4, 4>, %b:subgroup_matrix_right<f32, 4, 4>, %c:subgroup_matrix_result<f32, 4, 4>):subgroup_matrix_result<f32, 4, 4> {
+  $B2: {
+    %acc_1:ptr<function, subgroup_matrix_result<f32, 4, 4>, read_write> = var %c  # %acc_1: 'acc'
+    %11:void = %acc_1.MultiplyAccumulate %a, %b
+    %12:subgroup_matrix_result<f32, 4, 4> = load %acc_1
+    ret %12
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixMultiplyAccumulate_Deduplication) {
+    auto* l1 = b.FunctionParam("l1", ty.subgroup_matrix_left(ty.f32(), 4, 4));
+    auto* r1 = b.FunctionParam("r1", ty.subgroup_matrix_right(ty.f32(), 4, 4));
+    auto* acc1 = b.FunctionParam("acc1", ty.subgroup_matrix_result(ty.f32(), 4, 4));
+    auto* l2 = b.FunctionParam("l2", ty.subgroup_matrix_left(ty.u8(), 4, 4));
+    auto* r2 = b.FunctionParam("r2", ty.subgroup_matrix_right(ty.u8(), 4, 4));
+    auto* acc2 = b.FunctionParam("acc2", ty.subgroup_matrix_result(ty.u32(), 4, 4));
+    auto* func = b.Function("foo", ty.void_());
+    func->SetParams({l1, r1, acc1, l2, r2, acc2});
+    b.Append(func->Block(), [&] {
+        b.Call(acc1->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate, l1, r1, acc1);
+        b.Call(acc1->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate, l1, r1, acc1);
+        b.Call(acc2->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate, l2, r2, acc2);
+        b.Call(acc2->Type(), core::BuiltinFn::kSubgroupMatrixMultiplyAccumulate, l2, r2, acc2);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+%foo = func(%l1:subgroup_matrix_left<f32, 4, 4>, %r1:subgroup_matrix_right<f32, 4, 4>, %acc1:subgroup_matrix_result<f32, 4, 4>, %l2:subgroup_matrix_left<u8, 4, 4>, %r2:subgroup_matrix_right<u8, 4, 4>, %acc2:subgroup_matrix_result<u32, 4, 4>):void {
+  $B1: {
+    %8:subgroup_matrix_result<f32, 4, 4> = subgroupMatrixMultiplyAccumulate %l1, %r1, %acc1
+    %9:subgroup_matrix_result<f32, 4, 4> = subgroupMatrixMultiplyAccumulate %l1, %r1, %acc1
+    %10:subgroup_matrix_result<u32, 4, 4> = subgroupMatrixMultiplyAccumulate %l2, %r2, %acc2
+    %11:subgroup_matrix_result<u32, 4, 4> = subgroupMatrixMultiplyAccumulate %l2, %r2, %acc2
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%l1:subgroup_matrix_left<f32, 4, 4>, %r1:subgroup_matrix_right<f32, 4, 4>, %acc1:subgroup_matrix_result<f32, 4, 4>, %l2:subgroup_matrix_left<u8, 4, 4>, %r2:subgroup_matrix_right<u8, 4, 4>, %acc2:subgroup_matrix_result<u32, 4, 4>):void {
+  $B1: {
+    %8:subgroup_matrix_result<f32, 4, 4> = call %tint_MatrixMultiplyAccumulate, %l1, %r1, %acc1
+    %10:subgroup_matrix_result<f32, 4, 4> = call %tint_MatrixMultiplyAccumulate, %l1, %r1, %acc1
+    %11:subgroup_matrix_result<u32, 4, 4> = call %tint_MatrixMultiplyAccumulate_1, %l2, %r2, %acc2
+    %13:subgroup_matrix_result<u32, 4, 4> = call %tint_MatrixMultiplyAccumulate_1, %l2, %r2, %acc2
+    ret
+  }
+}
+%tint_MatrixMultiplyAccumulate = func(%a:subgroup_matrix_left<f32, 4, 4>, %b:subgroup_matrix_right<f32, 4, 4>, %c:subgroup_matrix_result<f32, 4, 4>):subgroup_matrix_result<f32, 4, 4> {
+  $B2: {
+    %acc:ptr<function, subgroup_matrix_result<f32, 4, 4>, read_write> = var %c
+    %18:void = %acc.MultiplyAccumulate %a, %b
+    %19:subgroup_matrix_result<f32, 4, 4> = load %acc
+    ret %19
+  }
+}
+%tint_MatrixMultiplyAccumulate_1 = func(%a_1:subgroup_matrix_left<u8, 4, 4>, %b_1:subgroup_matrix_right<u8, 4, 4>, %c_1:subgroup_matrix_result<u32, 4, 4>):subgroup_matrix_result<u32, 4, 4> {  # %a_1: 'a', %b_1: 'b', %c_1: 'c'
+  $B3: {
+    %acc_1:ptr<function, subgroup_matrix_result<u32, 4, 4>, read_write> = var %c_1  # %acc_1: 'acc'
+    %24:void = %acc_1.MultiplyAccumulate %a_1, %b_1
+    %25:subgroup_matrix_result<u32, 4, 4> = load %acc_1
+    ret %25
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", mat_ty);
+    b.Append(func->Block(), [&] {
+        auto* load = b.CallExplicit(
+            mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kRowMajor}, wg_var, 0_u,
+            4_u);
+        b.Return(func, load);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixLoad<subgroup_matrix_left<f32, 4, 4>, row_major> %wg, 0u, 4u
+    ret %3
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = hlsl.Load<subgroup_matrix_left<f32, 4, 4>> %wg, 0u, 4u, 0u
+    ret %3
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup_SignedOffsetAndStride) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    func->SetParams({offset, stride});
+    b.Append(func->Block(), [&] {
+        auto* load = b.CallExplicit(
+            mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kRowMajor}, wg_var,
+            offset, stride);
+        b.Return(func, load);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%offset:i32, %stride:i32):subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %5:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixLoad<subgroup_matrix_left<f32, 4, 4>, row_major> %wg, %offset, %stride
+    ret %5
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%offset:i32, %stride:i32):subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %5:u32 = hlsl.asuint %offset
+    %6:u32 = mul %5, 1u
+    %7:u32 = hlsl.asuint %stride
+    %8:u32 = mul %7, 1u
+    %9:subgroup_matrix_left<f32, 4, 4> = hlsl.Load<subgroup_matrix_left<f32, 4, 4>> %wg, %6, %8, 0u
+    ret %9
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup_ColMajorTemplate) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", mat_ty);
+    b.Append(func->Block(), [&] {
+        auto* load = b.CallExplicit(
+            mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kColMajor}, wg_var, 0_u,
+            4_u);
+        b.Return(func, load);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixLoad<subgroup_matrix_left<f32, 4, 4>, col_major> %wg, 0u, 4u
+    ret %3
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = hlsl.Load<subgroup_matrix_left<f32, 4, 4>> %wg, 0u, 4u, 1u
+    ret %3
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixLoad_Workgroup_RowMajorTemplate) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", mat_ty);
+    b.Append(func->Block(), [&] {
+        auto* load = b.CallExplicit(
+            mat_ty, core::BuiltinFn::kSubgroupMatrixLoad,
+            Vector<core::ir::TemplateParameter, 2>{mat_ty, core::Majorness::kRowMajor}, wg_var, 0_u,
+            4_u);
+        b.Return(func, load);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = subgroupMatrixLoad<subgroup_matrix_left<f32, 4, 4>, row_major> %wg, 0u, 4u
+    ret %3
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func():subgroup_matrix_left<f32, 4, 4> {
+  $B2: {
+    %3:subgroup_matrix_left<f32, 4, 4> = hlsl.Load<subgroup_matrix_left<f32, 4, 4>> %wg, 0u, 4u, 0u
+    ret %3
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* mat = b.FunctionParam("mat", mat_ty);
+    func->SetParams({mat});
+
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, wg_var,
+                       0_u, mat, 4_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = subgroupMatrixStore<row_major> %wg, 0u, %mat, 4u
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = %mat.Store %wg, 0u, 4u, 0u
+    ret
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup_SignedOffsetAndStride) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* mat = b.FunctionParam("mat", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.i32());
+    auto* stride = b.FunctionParam("stride", ty.i32());
+    func->SetParams({mat, offset, stride});
+
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, wg_var,
+                       offset, mat, stride);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>, %offset:i32, %stride:i32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<row_major> %wg, %offset, %mat, %stride
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>, %offset:i32, %stride:i32):void {
+  $B2: {
+    %6:u32 = hlsl.asuint %offset
+    %7:u32 = mul %6, 1u
+    %8:u32 = hlsl.asuint %stride
+    %9:u32 = mul %8, 1u
+    %10:void = %mat.Store %wg, %7, %9, 0u
+    ret
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup_ColMajorTemplate) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* mat = b.FunctionParam("mat", mat_ty);
+    func->SetParams({mat});
+
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kColMajor}, wg_var,
+                       0_u, mat, 4_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = subgroupMatrixStore<col_major> %wg, 0u, %mat, 4u
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = %mat.Store %wg, 0u, 4u, 1u
+    ret
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, SubgroupMatrixStore_Workgroup_RowMajorTemplate) {
+    auto* mat_ty = ty.subgroup_matrix_left(ty.f32(), 4, 4);
+    auto* wg_var = b.Var("wg", workgroup, ty.array<f32, 256>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(wg_var);
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* mat = b.FunctionParam("mat", mat_ty);
+    func->SetParams({mat});
+
+    b.Append(func->Block(), [&] {
+        b.CallExplicit(ty.void_(), core::BuiltinFn::kSubgroupMatrixStore,
+                       Vector<core::ir::TemplateParameter, 1>{core::Majorness::kRowMajor}, wg_var,
+                       0_u, mat, 4_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = subgroupMatrixStore<row_major> %wg, 0u, %mat, 4u
+    ret
+  }
+}
+)";
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %wg:ptr<workgroup, array<f32, 256>, read_write> = var undef
+}
+
+%foo = func(%mat:subgroup_matrix_left<f32, 4, 4>):void {
+  $B2: {
+    %4:void = %mat.Store %wg, 0u, 4u, 0u
+    ret
+  }
+}
+)";
+    Run(BuiltinPolyfill, BuiltinPolyfillConfig{});
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, AddSat_Scalar) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kAddSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%a:u32, %b:u32):void {
+  $B1: {
+    %4:u32 = addSat %a, %b
+    %res:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:u32, %b:u32):void {
+  $B1: {
+    %4:u32 = add %a, %b
+    %5:bool = lt %4, %a
+    %6:u32 = hlsl.ternary %4, 4294967295u, %5
+    %res:u32 = let %6
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, AddSat_Vector) {
+    auto* vec_ty = ty.vec2u();
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", vec_ty);
+    auto* rhs = b.FunctionParam("b", vec_ty);
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(vec_ty, core::BuiltinFn::kAddSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%a:vec2<u32>, %b:vec2<u32>):void {
+  $B1: {
+    %4:vec2<u32> = addSat %a, %b
+    %res:vec2<u32> = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:vec2<u32>, %b:vec2<u32>):void {
+  $B1: {
+    %4:vec2<u32> = add %a, %b
+    %5:vec2<bool> = lt %4, %a
+    %6:vec2<u32> = hlsl.select %5, vec2<u32>(4294967295u), %4
+    %res:vec2<u32> = let %6
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config{.use_hlsl_2021_select = true};
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, MulSat_Scalar) {
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", ty.u32());
+    auto* rhs = b.FunctionParam("b", ty.u32());
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(ty.u32(), core::BuiltinFn::kMulSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%a:u32, %b:u32):void {
+  $B1: {
+    %4:u32 = mulSat %a, %b
+    %res:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:u32, %b:u32):void {
+  $B1: {
+    %4:u32 = mul %a, %b
+    %5:bool = neq %a, 0u
+    %6:bool = neq %b, 0u
+    %7:u32 = div 4294967295u, %a
+    %8:bool = gt %b, %7
+    %9:bool = and %5, %6
+    %10:bool = and %9, %8
+    %11:u32 = hlsl.ternary %4, 4294967295u, %10
+    %res:u32 = let %11
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config;
+    Run(BuiltinPolyfill, config);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(HlslWriter_BuiltinPolyfillTest, MulSat_Vector) {
+    auto* vec_ty = ty.vec2u();
+    auto* foo = b.Function("foo", ty.void_());
+    auto* lhs = b.FunctionParam("a", vec_ty);
+    auto* rhs = b.FunctionParam("b", vec_ty);
+    foo->SetParams({lhs, rhs});
+    b.Append(foo->Block(), [&] {
+        auto* call = b.Call(vec_ty, core::BuiltinFn::kMulSat, lhs, rhs);
+        b.Let("res", call);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+%foo = func(%a:vec2<u32>, %b:vec2<u32>):void {
+  $B1: {
+    %4:vec2<u32> = mulSat %a, %b
+    %res:vec2<u32> = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+%foo = func(%a:vec2<u32>, %b:vec2<u32>):void {
+  $B1: {
+    %4:vec2<u32> = mul %a, %b
+    %5:vec2<bool> = neq %a, vec2<u32>(0u)
+    %6:vec2<bool> = neq %b, vec2<u32>(0u)
+    %7:vec2<u32> = div vec2<u32>(4294967295u), %a
+    %8:vec2<bool> = gt %b, %7
+    %9:vec2<bool> = and %5, %6
+    %10:vec2<bool> = and %9, %8
+    %11:vec2<u32> = hlsl.select %10, vec2<u32>(4294967295u), %4
+    %res:vec2<u32> = let %11
+    ret
+  }
+}
+)";
+
+    BuiltinPolyfillConfig config{.use_hlsl_2021_select = true};
+    Run(BuiltinPolyfill, config);
+
     EXPECT_EQ(expect, str());
 }
 

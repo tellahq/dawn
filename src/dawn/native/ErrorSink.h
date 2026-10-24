@@ -31,8 +31,8 @@
 #include <memory>
 #include <utility>
 
-#include "dawn/native/Error.h"
-#include "dawn/native/ErrorData.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/ErrorData.h"
 
 namespace dawn::native {
 
@@ -59,13 +59,7 @@ class ErrorSink {
                                      const char* formatStr,
                                      const Args&... args) {
         if (maybeError.IsError()) [[unlikely]] {
-            std::unique_ptr<ErrorData> error = maybeError.AcquireError();
-            if (static_cast<uint32_t>(error->GetType()) &
-                (static_cast<uint32_t>(additionalAllowedErrors) |
-                 static_cast<uint32_t>(InternalErrorType::Validation))) {
-                error->AppendContext(formatStr, args...);
-            }
-            ConsumeError(std::move(error), additionalAllowedErrors);
+            ConsumeError(maybeError.AcquireError(), additionalAllowedErrors, formatStr, args...);
             return true;
         }
         return false;
@@ -98,13 +92,7 @@ class ErrorSink {
                                      const char* formatStr,
                                      const Args&... args) {
         if (resultOrError.IsError()) [[unlikely]] {
-            std::unique_ptr<ErrorData> error = resultOrError.AcquireError();
-            if (static_cast<uint32_t>(error->GetType()) &
-                (static_cast<uint32_t>(additionalAllowedErrors) |
-                 static_cast<uint32_t>(InternalErrorType::Validation))) {
-                error->AppendContext(formatStr, args...);
-            }
-            ConsumeError(std::move(error), additionalAllowedErrors);
+            ConsumeError(resultOrError.AcquireError(), additionalAllowedErrors, formatStr, args...);
             return true;
         }
         *result = resultOrError.AcquireSuccess();
@@ -120,9 +108,28 @@ class ErrorSink {
                              args...);
     }
 
-  private:
+    template <typename... Args>
+    void ConsumeError(std::unique_ptr<InternalError> error,
+                      const char* formatStr,
+                      const Args&... args) {
+        ConsumeError(std::move(error), InternalErrorType::None, formatStr, args...);
+    }
+
+    template <typename... Args>
+    void ConsumeError(std::unique_ptr<InternalError> error,
+                      InternalErrorType additionalAllowedErrors,
+                      const char* formatStr,
+                      const Args&... args) {
+        if (static_cast<uint32_t>(error->GetType()) &
+            (static_cast<uint32_t>(additionalAllowedErrors) |
+             static_cast<uint32_t>(InternalErrorType::Validation))) {
+            error->AppendContext(formatStr, args...);
+        }
+        ConsumeError(std::move(error), additionalAllowedErrors);
+    }
+
     virtual void ConsumeError(
-        std::unique_ptr<ErrorData> error,
+        std::unique_ptr<InternalError> error,
         InternalErrorType additionalAllowedErrors = InternalErrorType::None) = 0;
 };
 

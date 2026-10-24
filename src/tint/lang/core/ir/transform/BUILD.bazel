@@ -34,13 +34,16 @@
 #                       Do not modify this file directly
 ################################################################################
 
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//src/tint:flags.bzl", "COPTS")
 load("@bazel_skylib//lib:selects.bzl", "selects")
+
+exports_files(glob(["*.def", "*.tmpl"], allow_empty = True))
+
 cc_library(
   name = "transform",
   srcs = [
-    "array_length_from_immediate.cc",
-    "array_length_from_uniform.cc",
+    "array_length_from.cc",
     "bgra8unorm_polyfill.cc",
     "binary_polyfill.cc",
     "binding_remapper.cc",
@@ -48,13 +51,16 @@ cc_library(
     "builtin_polyfill.cc",
     "builtin_scalarize.cc",
     "change_immediate_to_uniform.cc",
+    "collapse_subgroup_min_max.cc",
     "combine_access_instructions.cc",
     "conversion_polyfill.cc",
     "dead_code_elimination.cc",
     "decompose_access.cc",
     "demote_to_helper.cc",
     "direct_variable_access.cc",
+    "lower_swizzle_view.cc",
     "multiplanar_external_texture.cc",
+    "polyfill_bool_vector_dynamic_stores.cc",
     "prepare_immediate_data.cc",
     "preserve_padding.cc",
     "prevent_infinite_loops.cc",
@@ -77,8 +83,7 @@ cc_library(
     "zero_init_workgroup_memory.cc",
   ],
   hdrs = [
-    "array_length_from_immediate.h",
-    "array_length_from_uniform.h",
+    "array_length_from.h",
     "bgra8unorm_polyfill.h",
     "binary_polyfill.h",
     "binding_remapper.h",
@@ -86,14 +91,17 @@ cc_library(
     "builtin_polyfill.h",
     "builtin_scalarize.h",
     "change_immediate_to_uniform.h",
+    "collapse_subgroup_min_max.h",
     "combine_access_instructions.h",
     "conversion_polyfill.h",
     "dead_code_elimination.h",
     "decompose_access.h",
     "demote_to_helper.h",
     "direct_variable_access.h",
+    "lower_swizzle_view.h",
     "multiplanar_external_texture.h",
     "multiplanar_options.h",
+    "polyfill_bool_vector_dynamic_stores.h",
     "prepare_immediate_data.h",
     "preserve_padding.h",
     "prevent_infinite_loops.h",
@@ -122,7 +130,7 @@ cc_library(
     "//src/tint/lang/core/intrinsic",
     "//src/tint/lang/core/ir",
     "//src/tint/lang/core/ir/analysis",
-    "//src/tint/lang/core/ir/type",
+    "//src/tint/lang/core/ir/validator",
     "//src/tint/lang/core/type",
     "//src/tint/utils",
     "//src/tint/utils/containers",
@@ -131,6 +139,7 @@ cc_library(
     "//src/tint/utils/macros",
     "//src/tint/utils/math",
     "//src/tint/utils/memory",
+    "//src/tint/utils/reflection",
     "//src/tint/utils/rtti",
     "//src/tint/utils/symbol",
     "//src/tint/utils/text",
@@ -152,6 +161,7 @@ cc_library(
     "builtin_polyfill_test.cc",
     "builtin_scalarize_test.cc",
     "change_immediate_to_uniform_test.cc",
+    "collapse_subgroup_min_max_test.cc",
     "combine_access_instructions_test.cc",
     "conversion_polyfill_test.cc",
     "dead_code_elimination_test.cc",
@@ -159,7 +169,9 @@ cc_library(
     "demote_to_helper_test.cc",
     "direct_variable_access_test.cc",
     "helper_test.h",
+    "lower_swizzle_view_test.cc",
     "multiplanar_external_texture_test.cc",
+    "polyfill_bool_vector_dynamic_stores_test.cc",
     "prepare_immediate_data_test.cc",
     "preserve_padding_test.cc",
     "prevent_infinite_loops_test.cc",
@@ -186,7 +198,7 @@ cc_library(
     "//src/tint/lang/core/intrinsic",
     "//src/tint/lang/core/ir",
     "//src/tint/lang/core/ir/transform",
-    "//src/tint/lang/core/ir/type",
+    "//src/tint/lang/core/ir/validator",
     "//src/tint/lang/core/type",
     "//src/tint/utils",
     "//src/tint/utils/containers",
@@ -195,6 +207,7 @@ cc_library(
     "//src/tint/utils/macros",
     "//src/tint/utils/math",
     "//src/tint/utils/memory",
+    "//src/tint/utils/reflection",
     "//src/tint/utils/rtti",
     "//src/tint/utils/symbol",
     "//src/tint/utils/text",
@@ -203,5 +216,10 @@ cc_library(
   ],
   copts = COPTS,
   visibility = ["//visibility:public"],
+)
+
+alias(
+  name = "tint_build_fuzzers",
+  actual = "//src/tint:tint_build_fuzzers_true",
 )
 

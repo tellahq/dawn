@@ -33,8 +33,9 @@
 #include <string>
 #include <vector>
 
-#include "dawn/tests/DawnTest.h"
 #include "partition_alloc/pointers/raw_ptr.h"
+#include "src/dawn/tests/DawnTest.h"
+#include "src/utils/compiler.h"
 
 void InitDawnPerfTestEnvironment(int argc, char** argv);
 
@@ -110,7 +111,7 @@ class DawnPerfTestBase {
 
   private:
     void DoRunLoop(double maxRunTime);
-    void OutputResults();
+    void OutputResults(const std::vector<char>& traceData = {});
 
     void PrintResultImpl(const std::string& trace,
                          const std::string& value,
@@ -125,7 +126,7 @@ class DawnPerfTestBase {
     const unsigned int mMaxStepsInFlight;
     unsigned int mStepsToRun = 0;
     unsigned int mNumStepsPerformed = 0;
-    double mCpuTime;
+    double mCpuTime = 0;
     std::unique_ptr<utils::Timer> mTimer;
     std::optional<double> mGPUTime;
 };
@@ -201,7 +202,7 @@ class DawnPerfTestWithParams : public DawnTestWithParams<Params>, public DawnPer
         const uint64_t* readbackValues =
             static_cast<const uint64_t*>(mReadbackBuffer.GetConstMappedRange());
         ASSERT_EQ(2u, kTimestampQueryCount);
-        double gpuTimeElapsed = (readbackValues[1] - readbackValues[0]) / 1e9;
+        double gpuTimeElapsed = (DAWN_UNSAFE_TODO(readbackValues[1]) - readbackValues[0]) / 1e9;
         AddGPUTime(gpuTimeElapsed);
         mReadbackBuffer.Unmap();
     }

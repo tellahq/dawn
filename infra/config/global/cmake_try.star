@@ -27,6 +27,7 @@
 
 """Try Dawn builders using CMake for the build system instead of GN."""
 
+load("@chromium-luci//gpu.star", "gpu")
 load("@chromium-luci//try.star", "try_")
 load("//cmake_shared.star", "cmake_builder_defaults")
 load("//constants.star", "siso")
@@ -37,8 +38,7 @@ try_.defaults.set(
     executable = "recipe:dawn/cmake",
     builder_group = "try",
     bucket = "try",
-    pool = "luci.chromium.gpu.try",
-    builderless = True,
+    pool = gpu.try_.POOL,
     build_numbers = True,
     list_view = "try",
     cq_group = "Dawn-CQ",
@@ -54,57 +54,12 @@ def apply_cq_builder_defaults(kwargs):
     # There are fewer optimizations such as the use of `gn analyze` for CMake
     # builders, so allow more concurrent builds than GN equivalents.
     kwargs.setdefault("max_concurrent_builds", 5)
-    kwargs.setdefault("tryjob", try_.job(
+    kwargs.setdefault("cq_settings", try_.cq_settings(
         location_filters = exclusion_filters.cmake_cq_file_exclusions,
     ))
     return kwargs
 
-def apply_linux_cq_builder_defaults(kwargs):
-    """Sets default arguments for Linux CMake CQ builders.
-
-    Args:
-        kwargs: The kwargs for creating a try builder.
-
-    Returns:
-        |kwargs| with Linux/CMake defaults set.
-    """
-    kwargs = cmake_builder_defaults.apply_linux_cmake_builder_defaults(kwargs)
-    kwargs = apply_cq_builder_defaults(kwargs)
-
-    # TODO(crbug.com/459517292): Remove this and rely on file-wide defaults
-    # once we move Linux CMake builders into the luci.chromium.gpu.* pools.
-    kwargs.setdefault("pool", "luci.flex.try")
-    return kwargs
-
-def apply_mac_cq_builder_defaults(kwargs):
-    """Sets default arguments for Mac CMake CQ builders.
-
-    Args:
-        kwargs: The kwargs for creating a try builder.
-
-    Returns:
-        |kwargs| with Mac/CMake defaults set.
-    """
-    kwargs = cmake_builder_defaults.apply_mac_cmake_builder_defaults(kwargs)
-    kwargs = apply_cq_builder_defaults(kwargs)
-    return kwargs
-
-def apply_win_cq_builder_defaults(kwargs):
-    """Sets default arguments for Win CMake CQ builders.
-
-    Args:
-        kwargs: The kwargs for creating a try builder.
-
-    Returns:
-        |kwargs| with Win/CMake defaults set.
-    """
-    kwargs = cmake_builder_defaults.apply_win_cmake_builder_defaults(kwargs)
-    kwargs = apply_cq_builder_defaults(kwargs)
-    return kwargs
-
-def add_builder_to_main_and_milestone_cq_groups(kwargs):
-    # Dawn standalone builders run fine unbranched on branched CLs.
-    try_.builder(**kwargs)
+def add_builder_to_milestone_cq_group(kwargs):
     for milestone in ACTIVE_MILESTONES.keys():
         # TODO(crbug.com/459517292): Figure out why the legacy builders were
         # marked as experimental and remove the need for that.
@@ -115,16 +70,22 @@ def add_builder_to_main_and_milestone_cq_groups(kwargs):
         )
 
 def dawn_linux_cmake_cq_tester(**kwargs):
-    kwargs = apply_linux_cq_builder_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    kwargs = cmake_builder_defaults.apply_linux_cmake_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
+    gpu.try_.linux_optional_builder(**kwargs)
+    add_builder_to_milestone_cq_group(kwargs)
 
 def dawn_mac_cmake_cq_tester(**kwargs):
-    kwargs = apply_mac_cq_builder_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    kwargs = cmake_builder_defaults.apply_mac_cmake_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
+    gpu.try_.mac_optional_builder(**kwargs)
+    add_builder_to_milestone_cq_group(kwargs)
 
 def dawn_win_cmake_cq_tester(**kwargs):
-    kwargs = apply_win_cq_builder_defaults(kwargs)
-    add_builder_to_main_and_milestone_cq_groups(kwargs)
+    kwargs = cmake_builder_defaults.apply_win_cmake_builder_defaults(kwargs)
+    kwargs = apply_cq_builder_defaults(kwargs)
+    gpu.try_.win_optional_builder(**kwargs)
+    add_builder_to_milestone_cq_group(kwargs)
 
 ## CQ Builders
 
@@ -174,31 +135,31 @@ dawn_linux_cmake_cq_tester(
 )
 
 dawn_mac_cmake_cq_tester(
-    name = "dawn-cq-mac-x64-cmake-dbg",
-    description_html = "Compiles and tests debug Dawn test binaries for Mac/x64 using CMake and Clang. Blocks CL submission",
+    name = "dawn-cq-mac-arm64-cmake-dbg",
+    description_html = "Compiles and tests debug Dawn test binaries for Mac/arm64 using CMake and Clang. Blocks CL submission",
     mirrors = [
-        "ci/dawn-mac-x64-sws-cmake-dbg",
+        "ci/dawn-mac-arm64-sw-cmake-dbg",
     ],
     properties = {
         "asan": False,
         "clang": True,
         "debug": True,
-        "target_cpu": "x64",
+        "target_cpu": "arm64",
         "ubsan": False,
     },
 )
 
 dawn_mac_cmake_cq_tester(
-    name = "dawn-cq-mac-x64-cmake-rel",
-    description_html = "Compiles and tests release Dawn test binaries for Mac/x64 using CMake and Clang. Blocks CL submission",
+    name = "dawn-cq-mac-arm64-cmake-rel",
+    description_html = "Compiles and tests release Dawn test binaries for Mac/arm64 using CMake and Clang. Blocks CL submission",
     mirrors = [
-        "ci/dawn-mac-x64-sws-cmake-rel",
+        "ci/dawn-mac-arm64-sw-cmake-rel",
     ],
     properties = {
         "asan": False,
         "clang": True,
         "debug": False,
-        "target_cpu": "x64",
+        "target_cpu": "arm64",
         "ubsan": False,
     },
 )

@@ -1,10 +1,10 @@
 
-Texture1D<float4> tint_resource_table_array[] : register(t51, space43);
-ByteAddressBuffer tint_resource_table_metadata : register(t52, space42);
+Texture1D<float4> tint_resource_table_array[] : register(t28, space4);
+ByteAddressBuffer tint_resource_table_metadata : register(t29, space5);
 void fs() {
   bool v = false;
   if ((2u < tint_resource_table_metadata.Load(0u))) {
-    v = (tint_resource_table_metadata.Load(12u) == 1u);
+    v = any((uint2((tint_resource_table_metadata.Load(12u)).xx) == uint2(1u, 2u)));
   } else {
     v = false;
   }
@@ -14,7 +14,7 @@ void fs() {
   } else {
     v_1 = (0u + tint_resource_table_metadata.Load(0u));
   }
-  uint v_2 = v_1;
-  float4 texture_load = tint_resource_table_array[v_2].Load(int2(int(0), int(0)));
+  uint item_idx = v_1;
+  float4 texture_load = tint_resource_table_array[item_idx].Load((int(0)).xx);
 }
 

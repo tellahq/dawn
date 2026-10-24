@@ -171,10 +171,9 @@ TEST_F(SpirvWriterTest, PrivateVar_LoadAndStore) {
     EXPECT_INST("%v = OpVariable %_ptr_Private_int Private %int_42");
     EXPECT_INST("%load = OpLoad %int %v");
     EXPECT_INST("OpBitcast %uint %load");
-    EXPECT_INST("OpBitcast %uint %int_1");
-    EXPECT_INST("OpIAdd %uint %11 %12");
-    EXPECT_INST("OpBitcast %int %14");
-    EXPECT_INST("OpStore %v %15 None");
+    EXPECT_INST("OpIAdd %uint %11 %uint_1");
+    EXPECT_INST("OpBitcast %int %12");
+    EXPECT_INST("OpStore %v %14 None");
 }
 
 TEST_F(SpirvWriterTest, WorkgroupVar) {
@@ -210,10 +209,9 @@ TEST_F(SpirvWriterTest, WorkgroupVar_LoadAndStore) {
     EXPECT_INST("%v = OpVariable %_ptr_Workgroup_int Workgroup");
     EXPECT_INST("%load = OpLoad %int %v");
     EXPECT_INST("OpBitcast %uint %load");
-    EXPECT_INST("OpBitcast %uint %int_1");
-    EXPECT_INST("OpIAdd %uint %21 %22");
-    EXPECT_INST("OpBitcast %int %24");
-    EXPECT_INST("OpStore %v %25 None");
+    EXPECT_INST("OpIAdd %uint %21 %uint_1");
+    EXPECT_INST("OpBitcast %int %22");
+    EXPECT_INST("OpStore %v %23 None");
 }
 
 TEST_F(SpirvWriterTest, WorkgroupVar_ZeroInitializeWithExtension) {
@@ -288,11 +286,10 @@ TEST_F(SpirvWriterTest, StorageVar_LoadAndStore) {
           %9 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
        %load = OpLoad %int %9 None
          %14 = OpBitcast %uint %load
-         %15 = OpBitcast %uint %int_1
-         %17 = OpIAdd %uint %14 %15
-         %18 = OpBitcast %int %17
-         %19 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
-               OpStore %19 %18 None
+         %15 = OpIAdd %uint %14 %uint_1
+         %17 = OpBitcast %int %15
+         %18 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
+               OpStore %18 %17 None
 )");
 }
 
@@ -346,7 +343,7 @@ TEST_F(SpirvWriterTest, StorageVar_WithVulkan) {
 %_ptr_StorageBuffer_int = OpTypePointer StorageBuffer %int
        %uint = OpTypeInt 32 0
      %uint_0 = OpConstant %uint 0
-      %int_1 = OpConstant %int 1
+     %uint_1 = OpConstant %uint 1
 
                ; Function main
        %main = OpFunction %void None %7
@@ -354,11 +351,10 @@ TEST_F(SpirvWriterTest, StorageVar_WithVulkan) {
           %9 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
        %load = OpLoad %int %9 NonPrivatePointer
          %14 = OpBitcast %uint %load
-         %15 = OpBitcast %uint %int_1
-         %17 = OpIAdd %uint %14 %15
-         %18 = OpBitcast %int %17
-         %19 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
-               OpStore %19 %18 NonPrivatePointer
+         %15 = OpIAdd %uint %14 %uint_1
+         %17 = OpBitcast %int %15
+         %18 = OpAccessChain %_ptr_StorageBuffer_int %1 %uint_0
+               OpStore %18 %17 NonPrivatePointer
                OpReturn
                OpFunctionEnd)");
 }
@@ -396,7 +392,7 @@ TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
                OpName %main_inner "main_inner"                                                  ; id %7
                OpName %tint_local_index "tint_local_index"                                      ; id %9
                OpName %load "load"                                                              ; id %20
-               OpName %main "main"                                                              ; id %27
+               OpName %main "main"                                                              ; id %25
 
                ; Annotations
                OpDecorate %main_local_invocation_index_Input BuiltIn LocalInvocationIndex
@@ -414,9 +410,8 @@ TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
        %bool = OpTypeBool
      %uint_2 = OpConstant %uint 2
  %uint_24840 = OpConstant %uint 24840
-      %int_1 = OpConstant %int 1
       %int_0 = OpConstant %int 0
-         %28 = OpTypeFunction %void
+         %26 = OpTypeFunction %void
 
                ; Function main_inner
  %main_inner = OpFunction %void None %10
@@ -432,18 +427,17 @@ TEST_F(SpirvWriterTest, StorageVar_Workgroup_WithVulkan) {
                OpControlBarrier %uint_2 %uint_2 %uint_24840
        %load = OpLoad %int %v NonPrivatePointer
          %21 = OpBitcast %uint %load
-         %22 = OpBitcast %uint %int_1
-         %24 = OpIAdd %uint %21 %22
-         %25 = OpBitcast %int %24
-               OpStore %v %25 NonPrivatePointer
+         %22 = OpIAdd %uint %21 %uint_1
+         %23 = OpBitcast %int %22
+               OpStore %v %23 NonPrivatePointer
                OpReturn
                OpFunctionEnd
 
                ; Function main
-       %main = OpFunction %void None %28
-         %29 = OpLabel
-         %30 = OpLoad %uint %main_local_invocation_index_Input None
-         %31 = OpFunctionCall %void %main_inner %30
+       %main = OpFunction %void None %26
+         %27 = OpLabel
+         %28 = OpLoad %uint %main_local_invocation_index_Input None
+         %29 = OpFunctionCall %void %main_inner %28
                OpReturn
                OpFunctionEnd)");
 }
@@ -512,12 +506,15 @@ TEST_F(SpirvWriterTest, ImmediateVar) {
     auto result = Generate();
     ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
-               OpDecorate %v_block Block
+               OpDecorate %_arr_uint_uint_1 ArrayStride 4
+               OpMemberDecorate %tint_symbol_tint_explicit_layout 0 Offset 0
+               OpDecorate %tint_symbol_tint_explicit_layout Block
 )");
     EXPECT_INST(R"(
-    %v_block = OpTypeStruct %int                    ; Block
-%_ptr_PushConstant_v_block = OpTypePointer PushConstant %v_block
-          %1 = OpVariable %_ptr_PushConstant_v_block PushConstant
+%_arr_uint_uint_1 = OpTypeArray %uint %uint_1       ; ArrayStride 4
+%tint_symbol_tint_explicit_layout = OpTypeStruct %_arr_uint_uint_1  ; Block
+%_ptr_PushConstant_tint_symbol_tint_explicit_layout = OpTypePointer PushConstant %tint_symbol_tint_explicit_layout
+          %1 = OpVariable %_ptr_PushConstant_tint_symbol_tint_explicit_layout PushConstant
 )");
 }
 
@@ -541,9 +538,87 @@ TEST_F(SpirvWriterTest, ImmedaiteVar_Load) {
     auto result = Generate();
     ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
-          %8 = OpAccessChain %_ptr_PushConstant_int %1 %uint_0
-       %load = OpLoad %int %8 None
-               OpReturnValue %load
+         %11 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_1 %1 %uint_0
+         %14 = OpAccessChain %_ptr_PushConstant_uint %11 %uint_0
+         %16 = OpLoad %uint %14 None
+         %17 = OpBitcast %int %16
+               OpReturnValue %17
+)");
+}
+
+TEST_F(SpirvWriterTest, ImmediateVar_F16_Load) {
+    auto* v = b.Var("v", ty.ptr<immediate, f16>());
+    mod.root_block->Append(v);
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Load(v));
+        b.Return(eb);
+    });
+
+    Options options;
+    options.minimum_immediate_size = 4u;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
+    EXPECT_INST(R"(
+         %11 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_1 %1 %uint_0
+         %14 = OpAccessChain %_ptr_PushConstant_uint %11 %uint_0
+         %16 = OpLoad %uint %14 None
+         %19 = OpBitcast %v2half %16
+          %x = OpCompositeExtract %half %19 0
+)");
+}
+
+TEST_F(SpirvWriterTest, ImmediateVar_Vec3F16_Load) {
+    auto* v = b.Var("v", ty.ptr<immediate, vec3<f16>>());
+    mod.root_block->Append(v);
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Load(v));
+        b.Return(eb);
+    });
+
+    Options options;
+    options.minimum_immediate_size = 8u;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
+    EXPECT_INST(R"(
+         %11 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_2 %1 %uint_0
+         %14 = OpAccessChain %_ptr_PushConstant_uint %11 %uint_0
+         %16 = OpLoad %uint %14 Aligned 8
+         %17 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_2 %1 %uint_0
+         %18 = OpAccessChain %_ptr_PushConstant_uint %17 %uint_1
+         %20 = OpLoad %uint %18 None
+         %22 = OpCompositeConstruct %v2uint %16 %20
+         %25 = OpBitcast %v4half %22
+          %x = OpVectorShuffle %v3half %25 %25 0 1 2
+)");
+}
+
+TEST_F(SpirvWriterTest, ImmediateVar_Vec4F16_Load) {
+    auto* v = b.Var("v", ty.ptr<immediate, vec4<f16>>());
+    mod.root_block->Append(v);
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Load(v));
+        b.Return(eb);
+    });
+
+    Options options;
+    options.minimum_immediate_size = 8u;
+    auto result = Generate(options);
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
+    EXPECT_INST(R"(
+         %11 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_2 %1 %uint_0
+         %14 = OpAccessChain %_ptr_PushConstant_uint %11 %uint_0
+         %16 = OpLoad %uint %14 Aligned 8
+         %17 = OpAccessChain %_ptr_PushConstant__arr_uint_uint_2 %1 %uint_0
+         %18 = OpAccessChain %_ptr_PushConstant_uint %17 %uint_1
+         %20 = OpLoad %uint %18 None
+         %22 = OpCompositeConstruct %v2uint %16 %20
+          %x = OpBitcast %v4half %22
 )");
 }
 

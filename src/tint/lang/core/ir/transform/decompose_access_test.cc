@@ -40,7 +40,81 @@ using namespace tint::core::number_suffixes;  // NOLINT
 namespace tint::core::ir::transform {
 namespace {
 
-using IR_DecomposeAccessTest = core::ir::transform::TransformTest;
+struct IR_DecomposeAccessTest : public core::ir::transform::TransformTest {
+    void SetUp() override {
+        mod.properties.Add(Property::kAllow16BitFloats);
+        mod.properties.Add(Property::kAllow16BitIntegers);
+        mod.properties.Add(Property::kAllowBufferTypes);
+    }
+};
+
+TEST_F(IR_DecomposeAccessTest, OverflowArraySize) {
+    auto* S =
+        ty.Struct(mod.symbols.New("S"),
+                  {
+                      {mod.symbols.New("a"), ty.array(ty.array(ty.mat3x2(ty.f32()), 3235), 55319)},
+                      {mod.symbols.New("b"), ty.array(ty.mat3x2(ty.f32()), 5)},
+                      {mod.symbols.New("c"), ty.u32()},
+                  });
+
+    auto* v = b.Var("v", ty.ptr(uniform, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(uniform, ty.u32()), v, 2_u);
+        b.Load(access);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(8) {
+  a:array<array<mat3x2<f32>, 3235>, 55319> @offset(0)
+  b:array<mat3x2<f32>, 5> @offset(4294967160)
+  c:u32 @offset(4294967280)
+}
+
+$B1: {  # root
+  %v:ptr<uniform, S, read> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<uniform, u32, read> = access %v, 2u
+    %4:u32 = load %3
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(8) {
+  a:array<array<mat3x2<f32>, 3235>, 55319> @offset(0)
+  b:array<mat3x2<f32>, 5> @offset(4294967160)
+  c:u32 @offset(4294967280)
+}
+
+$B1: {  # root
+  %v:ptr<uniform, array<vec4<u32>, 268435456>, read> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<uniform, vec4<u32>, read> = access %v, 268435455u
+    %4:u32 = load_vector_element %3, 0u
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.uniform = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
 
 TEST_F(IR_DecomposeAccessTest, NoBufferAccess) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
@@ -56,7 +130,7 @@ TEST_F(IR_DecomposeAccessTest, NoBufferAccess) {
     EXPECT_EQ(src, str());
 
     auto* expect = src;
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
 
     EXPECT_EQ(expect, str());
@@ -82,9 +156,8 @@ TEST_F(IR_DecomposeAccessTest, UniformAccessChainFromUnnamedAccessChain) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* x = b.Access(ty.ptr(uniform, sb, core::Access::kRead), var, 2_u);
-        auto* y = b.Access(ty.ptr(uniform, Inner, core::Access::kRead), x->Result(), 1_u);
-        b.Let("b",
-              b.Load(b.Access(ty.ptr(uniform, ty.u32(), core::Access::kRead), y->Result(), 1_u)));
+        auto* y = b.Access(ty.ptr(uniform, Inner, core::Access::kRead), x, 1_u);
+        b.Let("b", b.Load(b.Access(ty.ptr(uniform, ty.u32(), core::Access::kRead), y, 1_u)));
         b.Return(func);
     });
 
@@ -141,7 +214,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -227,7 +300,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -301,7 +374,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -348,7 +421,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -437,7 +510,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -529,7 +602,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -615,7 +688,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -702,7 +775,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -789,7 +862,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -875,7 +948,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1068,7 +1141,7 @@ $B1: {  # root
   }
 }
 )";
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1139,7 +1212,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1279,7 +1352,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1420,7 +1493,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1560,7 +1633,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1608,8 +1681,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1657,7 +1729,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1704,7 +1776,7 @@ $B1: {  # root
 }
 )";
 
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1720,14 +1792,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadU32) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let(
-            "b",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 1_u)->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -1772,7 +1838,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 2u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(4)
     %8:ptr<storage, u16, read_write> = access %v, 3u
     %9:u16 = load %8
     %10:vec2<u16> = construct %7, %9
@@ -1783,8 +1849,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1799,11 +1864,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_LoadBool) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b",
-              b.Load(b.Access(ty.ptr(workgroup, ty.bool_(), core::Access::kReadWrite), var, 1_u)
-                         ->Result()));
+              b.Load(b.Access(ty.ptr(workgroup, ty.bool_(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -1848,7 +1912,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<workgroup, u16, read_write> = access %v, 2u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(4)
     %8:ptr<workgroup, u16, read_write> = access %v, 3u
     %9:u16 = load %8
     %10:vec2<u16> = construct %7, %9
@@ -1860,8 +1924,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1877,12 +1940,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec2h) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -1927,7 +1987,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 2u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(4)
     %8:ptr<storage, u16, read_write> = access %v, 3u
     %9:u16 = load %8
     %10:vec2<u16> = construct %7, %9
@@ -1938,8 +1998,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -1955,12 +2014,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec3h) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec3h(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec3h(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2005,7 +2061,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 4u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(8)
     %8:ptr<storage, u16, read_write> = access %v, 5u
     %9:u16 = load %8
     %10:ptr<storage, u16, read_write> = access %v, 6u
@@ -2018,8 +2074,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2035,12 +2090,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec4h) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec4h(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec4h(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2085,7 +2137,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 4u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(8)
     %8:ptr<storage, u16, read_write> = access %v, 5u
     %9:u16 = load %8
     %10:ptr<storage, u16, read_write> = access %v, 6u
@@ -2100,8 +2152,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2117,12 +2168,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec2u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2167,7 +2215,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 4u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(8)
     %8:ptr<storage, u16, read_write> = access %v, 5u
     %9:u16 = load %8
     %10:ptr<storage, u16, read_write> = access %v, 6u
@@ -2185,8 +2233,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2202,12 +2249,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec3u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2252,7 +2296,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 8u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(16)
     %8:ptr<storage, u16, read_write> = access %v, 9u
     %9:u16 = load %8
     %10:ptr<storage, u16, read_write> = access %v, 10u
@@ -2277,8 +2321,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2294,12 +2337,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_LoadVec4u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2344,7 +2384,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<storage, u16, read_write> = access %v, 8u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(16)
     %8:ptr<storage, u16, read_write> = access %v, 9u
     %9:u16 = load %8
     %10:ptr<storage, u16, read_write> = access %v, 10u
@@ -2374,8 +2414,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2390,11 +2429,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_LoadVec2b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec2(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -2439,7 +2477,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<workgroup, u16, read_write> = access %v, 4u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(8)
     %8:ptr<workgroup, u16, read_write> = access %v, 5u
     %9:u16 = load %8
     %10:ptr<workgroup, u16, read_write> = access %v, 6u
@@ -2458,8 +2496,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2474,11 +2511,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_LoadVec3b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec3(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -2523,7 +2559,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<workgroup, u16, read_write> = access %v, 8u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(16)
     %8:ptr<workgroup, u16, read_write> = access %v, 9u
     %9:u16 = load %8
     %10:ptr<workgroup, u16, read_write> = access %v, 10u
@@ -2549,8 +2585,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2565,11 +2600,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_LoadVec4b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec4(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -2614,7 +2648,7 @@ $B1: {  # root
     %4:u16 = load %3
     %a:u16 = let %4
     %6:ptr<workgroup, u16, read_write> = access %v, 8u
-    %7:u16 = load %6
+    %7:u16 = load %6 @align(16)
     %8:ptr<workgroup, u16, read_write> = access %v, 9u
     %9:u16 = load %8
     %10:ptr<workgroup, u16, read_write> = access %v, 10u
@@ -2645,8 +2679,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2662,12 +2695,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_LoadVec2u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2712,7 +2742,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<storage, u32, read_write> = access %v, 2u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(8)
     %8:ptr<storage, u32, read_write> = access %v, 3u
     %9:u32 = load %8
     %10:vec2<u32> = construct %7, %9
@@ -2722,8 +2752,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2739,12 +2768,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_LoadVec3u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2789,7 +2815,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<storage, u32, read_write> = access %v, 4u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(16)
     %8:ptr<storage, u32, read_write> = access %v, 5u
     %9:u32 = load %8
     %10:ptr<storage, u32, read_write> = access %v, 6u
@@ -2802,8 +2828,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2819,12 +2844,9 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_LoadVec4u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let(
-            "a",
-            b.Load(
-                b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -2869,7 +2891,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<storage, u32, read_write> = access %v, 4u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(16)
     %8:ptr<storage, u32, read_write> = access %v, 5u
     %9:u32 = load %8
     %10:ptr<storage, u32, read_write> = access %v, 6u
@@ -2883,8 +2905,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2899,11 +2920,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU32_LoadVec2b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec2(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -2948,7 +2968,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<workgroup, u32, read_write> = access %v, 2u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(8)
     %8:ptr<workgroup, u32, read_write> = access %v, 3u
     %9:u32 = load %8
     %10:vec2<u32> = construct %7, %9
@@ -2959,8 +2979,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -2975,11 +2994,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU32_LoadVec3b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec3(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -3024,7 +3042,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<workgroup, u32, read_write> = access %v, 4u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(16)
     %8:ptr<workgroup, u32, read_write> = access %v, 5u
     %9:u32 = load %8
     %10:ptr<workgroup, u32, read_write> = access %v, 6u
@@ -3038,8 +3056,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3054,11 +3071,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU32_LoadVec4b) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec4(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -3103,7 +3119,7 @@ $B1: {  # root
     %4:u32 = load %3
     %a:u32 = let %4
     %6:ptr<workgroup, u32, read_write> = access %v, 4u
-    %7:u32 = load %6
+    %7:u32 = load %6 @align(16)
     %8:ptr<workgroup, u32, read_write> = access %v, 5u
     %9:u32 = load %8
     %10:ptr<workgroup, u32, read_write> = access %v, 6u
@@ -3118,8 +3134,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3135,10 +3150,10 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessVec2u_LoadVec2u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -3190,8 +3205,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3207,10 +3221,10 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessVec2u_LoadVec3u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -3253,13 +3267,13 @@ $B1: {  # root
 %foo = @fragment func():void {
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
-    %4:u32 = load %3
+    %4:u32 = load %3 @align(8)
     %5:ptr<storage, u32, read_write> = access %v, 1u
     %6:u32 = load %5
     %7:vec2<u32> = construct %4, %6
     %a:vec2<u32> = let %7
     %9:ptr<storage, u32, read_write> = access %v, 4u
-    %10:u32 = load %9
+    %10:u32 = load %9 @align(16)
     %11:ptr<storage, u32, read_write> = access %v, 5u
     %12:u32 = load %11
     %13:ptr<storage, u32, read_write> = access %v, 6u
@@ -3272,8 +3286,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3289,10 +3302,10 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessVec2u_LoadVec4u) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Let("a", b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                              ->Result()));
-        b.Let("b", b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)
-                              ->Result()));
+        b.Let("a",
+              b.Load(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
+        b.Let("b",
+              b.Load(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u)));
         b.Return(func);
     });
 
@@ -3337,7 +3350,7 @@ $B1: {  # root
     %4:vec2<u32> = load %3
     %a:vec2<u32> = let %4
     %6:ptr<storage, vec2<u32>, read_write> = access %v, 2u
-    %7:vec2<u32> = load %6
+    %7:vec2<u32> = load %6 @align(16)
     %8:ptr<storage, vec2<u32>, read_write> = access %v, 3u
     %9:vec2<u32> = load %8
     %10:vec4<u32> = construct %7, %9
@@ -3347,8 +3360,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3364,11 +3376,9 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessVec2u_LoadVec2b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Let("a",
-              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                         ->Result()));
+              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec2(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -3421,8 +3431,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3438,11 +3447,9 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessVec2u_LoadVec3b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Let("a",
-              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                         ->Result()));
+              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec3(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -3485,13 +3492,13 @@ $B1: {  # root
 %foo = func():void {
   $B2: {
     %3:ptr<workgroup, u32, read_write> = access %v, 0u
-    %4:u32 = load %3
+    %4:u32 = load %3 @align(8)
     %5:ptr<workgroup, u32, read_write> = access %v, 1u
     %6:u32 = load %5
     %7:vec2<u32> = construct %4, %6
     %a:vec2<u32> = let %7
     %9:ptr<workgroup, u32, read_write> = access %v, 4u
-    %10:u32 = load %9
+    %10:u32 = load %9 @align(16)
     %11:ptr<workgroup, u32, read_write> = access %v, 5u
     %12:u32 = load %11
     %13:ptr<workgroup, u32, read_write> = access %v, 6u
@@ -3505,8 +3512,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3522,11 +3528,9 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessVec2u_LoadVec4b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Let("a",
-              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)
-                         ->Result()));
+              b.Load(b.Access(ty.ptr(workgroup, ty.vec2u(), core::Access::kReadWrite), var, 0_u)));
         b.Let("b", b.Load(b.Access(ty.ptr(workgroup, ty.vec4(ty.bool_()), core::Access::kReadWrite),
-                                   var, 1_u)
-                              ->Result()));
+                                   var, 1_u)));
         b.Return(func);
     });
 
@@ -3571,7 +3575,7 @@ $B1: {  # root
     %4:vec2<u32> = load %3
     %a:vec2<u32> = let %4
     %6:ptr<workgroup, vec2<u32>, read_write> = access %v, 2u
-    %7:vec2<u32> = load %6
+    %7:vec2<u32> = load %6 @align(16)
     %8:ptr<workgroup, vec2<u32>, read_write> = access %v, 3u
     %9:vec2<u32> = load %8
     %10:vec4<u32> = construct %7, %9
@@ -3582,8 +3586,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3670,7 +3673,7 @@ $B1: {  # root
         %20:ptr<function, u32, read_write> = access %a_1, %idx
         %21:u32 = div %19, 2u
         %22:ptr<workgroup, u16, read_write> = access %v, %21
-        %23:u16 = load %22
+        %23:u16 = load %22 @align(4)
         %24:u32 = add %21, 1u
         %25:ptr<workgroup, u16, read_write> = access %v, %24
         %26:u16 = load %25
@@ -3690,8 +3693,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3778,7 +3780,7 @@ $B1: {  # root
         %22:vec2<u16> = bitcast<vec2<u16>> %20
         %23:ptr<workgroup, u16, read_write> = access %v, %21
         %24:u16 = access %22, 0u
-        store %23, %24
+        store %23, %24 @align(4)
         %25:u32 = add %21, 1u
         %26:ptr<workgroup, u16, read_write> = access %v, %25
         %27:u16 = access %22, 1u
@@ -3795,8 +3797,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3808,7 +3809,8 @@ TEST_F(IR_DecomposeAccessTest, Store_AccessU16_StoreF16) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Store(var, b.Constant(f16(0)));
+        auto* l = b.Let("l", b.Constant(f16(0)));
+        b.Store(var, l);
         b.Return(func);
     });
 
@@ -3819,7 +3821,8 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    store %v, 0.0h
+    %l:f16 = let 0.0h
+    store %v, %l
     ret
   }
 }
@@ -3834,16 +3837,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:u16 = bitcast<u16> 0.0h
-    %4:ptr<storage, u16, read_write> = access %v, 0u
-    store %4, %3
+    %l:f16 = let 0.0h
+    %4:u16 = bitcast<u16> %l
+    %5:ptr<storage, u16, read_write> = access %v, 0u
+    store %5, %4
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3855,7 +3858,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreF32) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        b.Store(var, f32(0));
+        auto* l = b.Let("l", f32(0));
+        b.Store(var, l);
         b.Return(func);
     });
 
@@ -3866,7 +3870,8 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    store %v, 0.0f
+    %l:f32 = let 0.0f
+    store %v, %l
     ret
   }
 }
@@ -3881,16 +3886,16 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:u32 = bitcast<u32> 0.0f
-    %4:ptr<storage, u32, read_write> = access %v, 0u
-    store %4, %3
+    %l:f32 = let 0.0f
+    %4:u32 = bitcast<u32> %l
+    %5:ptr<storage, u32, read_write> = access %v, 0u
+    store %5, %4
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3928,16 +3933,14 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec2<u32> = bitcast<vec2<u32>> vec2<f32>(0.0f)
-    %4:ptr<storage, vec2<u32>, read_write> = access %v, 0u
-    store %4, %3
+    %3:ptr<storage, vec2<u32>, read_write> = access %v, 0u
+    store %3, vec2<u32>(0u)
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -3975,16 +3978,14 @@ $B1: {  # root
 
 %foo = @fragment func():void {
   $B2: {
-    %3:vec4<u32> = bitcast<vec4<u32>> vec4<f32>(0.0f)
-    %4:ptr<storage, vec4<u32>, read_write> = access %v, 0u
-    store %4, %3
+    %3:ptr<storage, vec4<u32>, read_write> = access %v, 0u
+    store %3, vec4<u32>(0u)
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4021,21 +4022,19 @@ $B1: {  # root
 
 %foo = func():void {
   $B2: {
-    %3:vec4<u32> = convert vec4<bool>(false)
-    %4:ptr<workgroup, vec4<u32>, read_write> = access %v, 0u
-    store %4, %3
+    %3:ptr<workgroup, vec4<u32>, read_write> = access %v, 0u
+    store %3, vec4<u32>(0u)
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreU32) {
+TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreU32_Const) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
                                                     {mod.symbols.New("a"), ty.u16()},
                                                     {mod.symbols.New("b"), ty.u32()},
@@ -4088,20 +4087,16 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:vec2<u16> = bitcast<vec2<u16>> 0u
-    %5:ptr<storage, u16, read_write> = access %v, 2u
-    %6:u16 = access %4, 0u
-    store %5, %6
-    %7:ptr<storage, u16, read_write> = access %v, 3u
-    %8:u16 = access %4, 1u
-    store %7, %8
+    %4:ptr<storage, u16, read_write> = access %v, 2u
+    store %4, 0u16 @align(4)
+    %5:ptr<storage, u16, read_write> = access %v, 3u
+    store %5, 0u16
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4117,8 +4112,8 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_StoreBool) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(workgroup, ty.bool_(), core::Access::kReadWrite), var, 1_u),
-                b.Constant(false));
+        auto* l = b.Let("l", b.Constant(false));
+        b.Store(b.Access(ty.ptr(workgroup, ty.bool_(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4136,8 +4131,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<workgroup, bool, read_write> = access %v, 1u
-    store %4, false
+    %l:bool = let false
+    %5:ptr<workgroup, bool, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4159,26 +4155,26 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:u32 = convert false
-    %5:vec2<u16> = bitcast<vec2<u16>> %4
-    %6:ptr<workgroup, u16, read_write> = access %v, 2u
-    %7:u16 = access %5, 0u
-    store %6, %7
-    %8:ptr<workgroup, u16, read_write> = access %v, 3u
-    %9:u16 = access %5, 1u
-    store %8, %9
+    %l:bool = let false
+    %5:u32 = convert %l
+    %6:vec2<u16> = bitcast<vec2<u16>> %5
+    %7:ptr<workgroup, u16, read_write> = access %v, 2u
+    %8:u16 = access %6, 0u
+    store %7, %8 @align(4)
+    %9:ptr<workgroup, u16, read_write> = access %v, 3u
+    %10:u16 = access %6, 1u
+    store %9, %10
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec2h) {
+TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec2h_WithU16) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
                                                     {mod.symbols.New("a"), ty.u16()},
                                                     {mod.symbols.New("b"), ty.vec2h()},
@@ -4190,8 +4186,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec2h) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec2h()));
+        auto* l = b.Let("l", b.Zero(ty.vec2h()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4209,8 +4205,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<storage, vec2<f16>, read_write> = access %v, 1u
-    store %4, vec2<f16>(0.0h)
+    %l:vec2<f16> = let vec2<f16>(0.0h)
+    %5:ptr<storage, vec2<f16>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4232,21 +4229,21 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:f16 = access vec2<f16>(0.0h), 0u
-    %5:u16 = bitcast<u16> %4
-    %6:ptr<storage, u16, read_write> = access %v, 2u
-    store %6, %5
-    %7:f16 = access vec2<f16>(0.0h), 1u
-    %8:u16 = bitcast<u16> %7
-    %9:ptr<storage, u16, read_write> = access %v, 3u
-    store %9, %8
+    %l:vec2<f16> = let vec2<f16>(0.0h)
+    %5:f16 = access %l, 0u
+    %6:u16 = bitcast<u16> %5
+    %7:ptr<storage, u16, read_write> = access %v, 2u
+    store %7, %6 @align(4)
+    %8:f16 = access %l, 1u
+    %9:u16 = bitcast<u16> %8
+    %10:ptr<storage, u16, read_write> = access %v, 3u
+    store %10, %9
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4263,8 +4260,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec3h) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec3h(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec3h()));
+        auto* l = b.Let("l", b.Zero(ty.vec3h()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec3h(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4282,8 +4279,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<storage, vec3<f16>, read_write> = access %v, 1u
-    store %4, vec3<f16>(0.0h)
+    %l:vec3<f16> = let vec3<f16>(0.0h)
+    %5:ptr<storage, vec3<f16>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4305,30 +4303,30 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:f16 = access vec3<f16>(0.0h), 0u
-    %5:u16 = bitcast<u16> %4
-    %6:ptr<storage, u16, read_write> = access %v, 4u
-    store %6, %5
-    %7:f16 = access vec3<f16>(0.0h), 1u
-    %8:u16 = bitcast<u16> %7
-    %9:ptr<storage, u16, read_write> = access %v, 5u
-    store %9, %8
-    %10:f16 = access vec3<f16>(0.0h), 2u
-    %11:u16 = bitcast<u16> %10
-    %12:ptr<storage, u16, read_write> = access %v, 6u
-    store %12, %11
+    %l:vec3<f16> = let vec3<f16>(0.0h)
+    %5:f16 = access %l, 0u
+    %6:u16 = bitcast<u16> %5
+    %7:ptr<storage, u16, read_write> = access %v, 4u
+    store %7, %6 @align(8)
+    %8:f16 = access %l, 1u
+    %9:u16 = bitcast<u16> %8
+    %10:ptr<storage, u16, read_write> = access %v, 5u
+    store %10, %9
+    %11:f16 = access %l, 2u
+    %12:u16 = bitcast<u16> %11
+    %13:ptr<storage, u16, read_write> = access %v, 6u
+    store %13, %12
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec4h) {
+TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec4h_WithU16) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
                                                     {mod.symbols.New("a"), ty.u16()},
                                                     {mod.symbols.New("b"), ty.vec4h()},
@@ -4382,29 +4380,20 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:f16 = access vec4<f16>(0.0h), 0u
-    %5:u16 = bitcast<u16> %4
-    %6:ptr<storage, u16, read_write> = access %v, 4u
-    store %6, %5
-    %7:f16 = access vec4<f16>(0.0h), 1u
-    %8:u16 = bitcast<u16> %7
-    %9:ptr<storage, u16, read_write> = access %v, 5u
-    store %9, %8
-    %10:f16 = access vec4<f16>(0.0h), 2u
-    %11:u16 = bitcast<u16> %10
-    %12:ptr<storage, u16, read_write> = access %v, 6u
-    store %12, %11
-    %13:f16 = access vec4<f16>(0.0h), 3u
-    %14:u16 = bitcast<u16> %13
-    %15:ptr<storage, u16, read_write> = access %v, 7u
-    store %15, %14
+    %4:ptr<storage, u16, read_write> = access %v, 4u
+    store %4, 0u16 @align(8)
+    %5:ptr<storage, u16, read_write> = access %v, 5u
+    store %5, 0u16
+    %6:ptr<storage, u16, read_write> = access %v, 6u
+    store %6, 0u16
+    %7:ptr<storage, u16, read_write> = access %v, 7u
+    store %7, 0u16
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4421,8 +4410,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec2u) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec2u()));
+        auto* l = b.Let("l", b.Zero(ty.vec2u()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4440,8 +4429,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<storage, vec2<u32>, read_write> = access %v, 1u
-    store %4, vec2<u32>(0u)
+    %l:vec2<u32> = let vec2<u32>(0u)
+    %5:ptr<storage, vec2<u32>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4463,33 +4453,33 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:u32 = access vec2<u32>(0u), 0u
-    %5:vec2<u16> = bitcast<vec2<u16>> %4
-    %6:u16 = access %5, 0u
-    %7:ptr<storage, u16, read_write> = access %v, 4u
-    store %7, %6
-    %8:u32 = access vec2<u32>(0u), 0u
-    %9:vec2<u16> = bitcast<vec2<u16>> %8
-    %10:u16 = access %9, 1u
-    %11:ptr<storage, u16, read_write> = access %v, 5u
-    store %11, %10
-    %12:u32 = access vec2<u32>(0u), 1u
-    %13:vec2<u16> = bitcast<vec2<u16>> %12
-    %14:u16 = access %13, 0u
-    %15:ptr<storage, u16, read_write> = access %v, 6u
-    store %15, %14
-    %16:u32 = access vec2<u32>(0u), 1u
-    %17:vec2<u16> = bitcast<vec2<u16>> %16
-    %18:u16 = access %17, 1u
-    %19:ptr<storage, u16, read_write> = access %v, 7u
-    store %19, %18
+    %l:vec2<u32> = let vec2<u32>(0u)
+    %5:u32 = access %l, 0u
+    %6:vec2<u16> = bitcast<vec2<u16>> %5
+    %7:u16 = access %6, 0u
+    %8:ptr<storage, u16, read_write> = access %v, 4u
+    store %8, %7 @align(8)
+    %9:u32 = access %l, 0u
+    %10:vec2<u16> = bitcast<vec2<u16>> %9
+    %11:u16 = access %10, 1u
+    %12:ptr<storage, u16, read_write> = access %v, 5u
+    store %12, %11
+    %13:u32 = access %l, 1u
+    %14:vec2<u16> = bitcast<vec2<u16>> %13
+    %15:u16 = access %14, 0u
+    %16:ptr<storage, u16, read_write> = access %v, 6u
+    store %16, %15
+    %17:u32 = access %l, 1u
+    %18:vec2<u16> = bitcast<vec2<u16>> %17
+    %19:u16 = access %18, 1u
+    %20:ptr<storage, u16, read_write> = access %v, 7u
+    store %20, %19
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4506,8 +4496,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec3u) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec3u()));
+        auto* l = b.Let("l", b.Zero(ty.vec3u()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4525,8 +4515,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<storage, vec3<u32>, read_write> = access %v, 1u
-    store %4, vec3<u32>(0u)
+    %l:vec3<u32> = let vec3<u32>(0u)
+    %5:ptr<storage, vec3<u32>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4548,43 +4539,43 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:u32 = access vec3<u32>(0u), 0u
-    %5:vec2<u16> = bitcast<vec2<u16>> %4
-    %6:u16 = access %5, 0u
-    %7:ptr<storage, u16, read_write> = access %v, 8u
-    store %7, %6
-    %8:u32 = access vec3<u32>(0u), 0u
-    %9:vec2<u16> = bitcast<vec2<u16>> %8
-    %10:u16 = access %9, 1u
-    %11:ptr<storage, u16, read_write> = access %v, 9u
-    store %11, %10
-    %12:u32 = access vec3<u32>(0u), 1u
-    %13:vec2<u16> = bitcast<vec2<u16>> %12
-    %14:u16 = access %13, 0u
-    %15:ptr<storage, u16, read_write> = access %v, 10u
-    store %15, %14
-    %16:u32 = access vec3<u32>(0u), 1u
-    %17:vec2<u16> = bitcast<vec2<u16>> %16
-    %18:u16 = access %17, 1u
-    %19:ptr<storage, u16, read_write> = access %v, 11u
-    store %19, %18
-    %20:u32 = access vec3<u32>(0u), 2u
-    %21:vec2<u16> = bitcast<vec2<u16>> %20
-    %22:u16 = access %21, 0u
-    %23:ptr<storage, u16, read_write> = access %v, 12u
-    store %23, %22
-    %24:u32 = access vec3<u32>(0u), 2u
-    %25:vec2<u16> = bitcast<vec2<u16>> %24
-    %26:u16 = access %25, 1u
-    %27:ptr<storage, u16, read_write> = access %v, 13u
-    store %27, %26
+    %l:vec3<u32> = let vec3<u32>(0u)
+    %5:u32 = access %l, 0u
+    %6:vec2<u16> = bitcast<vec2<u16>> %5
+    %7:u16 = access %6, 0u
+    %8:ptr<storage, u16, read_write> = access %v, 8u
+    store %8, %7 @align(16)
+    %9:u32 = access %l, 0u
+    %10:vec2<u16> = bitcast<vec2<u16>> %9
+    %11:u16 = access %10, 1u
+    %12:ptr<storage, u16, read_write> = access %v, 9u
+    store %12, %11
+    %13:u32 = access %l, 1u
+    %14:vec2<u16> = bitcast<vec2<u16>> %13
+    %15:u16 = access %14, 0u
+    %16:ptr<storage, u16, read_write> = access %v, 10u
+    store %16, %15
+    %17:u32 = access %l, 1u
+    %18:vec2<u16> = bitcast<vec2<u16>> %17
+    %19:u16 = access %18, 1u
+    %20:ptr<storage, u16, read_write> = access %v, 11u
+    store %20, %19
+    %21:u32 = access %l, 2u
+    %22:vec2<u16> = bitcast<vec2<u16>> %21
+    %23:u16 = access %22, 0u
+    %24:ptr<storage, u16, read_write> = access %v, 12u
+    store %24, %23
+    %25:u32 = access %l, 2u
+    %26:vec2<u16> = bitcast<vec2<u16>> %25
+    %27:u16 = access %26, 1u
+    %28:ptr<storage, u16, read_write> = access %v, 13u
+    store %28, %27
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4601,8 +4592,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec4u) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec4u()));
+        auto* l = b.Let("l", b.Zero(ty.vec4u()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -4620,8 +4611,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<storage, vec4<u32>, read_write> = access %v, 1u
-    store %4, vec4<u32>(0u)
+    %l:vec4<u32> = let vec4<u32>(0u)
+    %5:ptr<storage, vec4<u32>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4643,53 +4635,53 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:u32 = access vec4<u32>(0u), 0u
-    %5:vec2<u16> = bitcast<vec2<u16>> %4
-    %6:u16 = access %5, 0u
-    %7:ptr<storage, u16, read_write> = access %v, 8u
-    store %7, %6
-    %8:u32 = access vec4<u32>(0u), 0u
-    %9:vec2<u16> = bitcast<vec2<u16>> %8
-    %10:u16 = access %9, 1u
-    %11:ptr<storage, u16, read_write> = access %v, 9u
-    store %11, %10
-    %12:u32 = access vec4<u32>(0u), 1u
-    %13:vec2<u16> = bitcast<vec2<u16>> %12
-    %14:u16 = access %13, 0u
-    %15:ptr<storage, u16, read_write> = access %v, 10u
-    store %15, %14
-    %16:u32 = access vec4<u32>(0u), 1u
-    %17:vec2<u16> = bitcast<vec2<u16>> %16
-    %18:u16 = access %17, 1u
-    %19:ptr<storage, u16, read_write> = access %v, 11u
-    store %19, %18
-    %20:u32 = access vec4<u32>(0u), 2u
-    %21:vec2<u16> = bitcast<vec2<u16>> %20
-    %22:u16 = access %21, 0u
-    %23:ptr<storage, u16, read_write> = access %v, 12u
-    store %23, %22
-    %24:u32 = access vec4<u32>(0u), 2u
-    %25:vec2<u16> = bitcast<vec2<u16>> %24
-    %26:u16 = access %25, 1u
-    %27:ptr<storage, u16, read_write> = access %v, 13u
-    store %27, %26
-    %28:u32 = access vec4<u32>(0u), 3u
-    %29:vec2<u16> = bitcast<vec2<u16>> %28
-    %30:u16 = access %29, 0u
-    %31:ptr<storage, u16, read_write> = access %v, 14u
-    store %31, %30
-    %32:u32 = access vec4<u32>(0u), 3u
-    %33:vec2<u16> = bitcast<vec2<u16>> %32
-    %34:u16 = access %33, 1u
-    %35:ptr<storage, u16, read_write> = access %v, 15u
-    store %35, %34
+    %l:vec4<u32> = let vec4<u32>(0u)
+    %5:u32 = access %l, 0u
+    %6:vec2<u16> = bitcast<vec2<u16>> %5
+    %7:u16 = access %6, 0u
+    %8:ptr<storage, u16, read_write> = access %v, 8u
+    store %8, %7 @align(16)
+    %9:u32 = access %l, 0u
+    %10:vec2<u16> = bitcast<vec2<u16>> %9
+    %11:u16 = access %10, 1u
+    %12:ptr<storage, u16, read_write> = access %v, 9u
+    store %12, %11
+    %13:u32 = access %l, 1u
+    %14:vec2<u16> = bitcast<vec2<u16>> %13
+    %15:u16 = access %14, 0u
+    %16:ptr<storage, u16, read_write> = access %v, 10u
+    store %16, %15
+    %17:u32 = access %l, 1u
+    %18:vec2<u16> = bitcast<vec2<u16>> %17
+    %19:u16 = access %18, 1u
+    %20:ptr<storage, u16, read_write> = access %v, 11u
+    store %20, %19
+    %21:u32 = access %l, 2u
+    %22:vec2<u16> = bitcast<vec2<u16>> %21
+    %23:u16 = access %22, 0u
+    %24:ptr<storage, u16, read_write> = access %v, 12u
+    store %24, %23
+    %25:u32 = access %l, 2u
+    %26:vec2<u16> = bitcast<vec2<u16>> %25
+    %27:u16 = access %26, 1u
+    %28:ptr<storage, u16, read_write> = access %v, 13u
+    store %28, %27
+    %29:u32 = access %l, 3u
+    %30:vec2<u16> = bitcast<vec2<u16>> %29
+    %31:u16 = access %30, 0u
+    %32:ptr<storage, u16, read_write> = access %v, 14u
+    store %32, %31
+    %33:u32 = access %l, 3u
+    %34:vec2<u16> = bitcast<vec2<u16>> %33
+    %35:u16 = access %34, 1u
+    %36:ptr<storage, u16, read_write> = access %v, 15u
+    store %36, %35
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4705,9 +4697,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_StoreVec2b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
+        auto* l = b.Let("l", b.Zero(ty.vec2(ty.bool_())));
         b.Store(
             b.Access(ty.ptr(workgroup, ty.vec2(ty.bool_()), core::Access::kReadWrite), var, 1_u),
-            b.Zero(ty.vec2(ty.bool_())));
+            l);
         b.Return(func);
     });
 
@@ -4725,8 +4718,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<workgroup, vec2<bool>, read_write> = access %v, 1u
-    store %4, vec2<bool>(false)
+    %l:vec2<bool> = let vec2<bool>(false)
+    %5:ptr<workgroup, vec2<bool>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4748,37 +4742,37 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:bool = access vec2<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:vec2<u16> = bitcast<vec2<u16>> %5
-    %7:u16 = access %6, 0u
-    %8:ptr<workgroup, u16, read_write> = access %v, 4u
-    store %8, %7
-    %9:bool = access vec2<bool>(false), 0u
-    %10:u32 = convert %9
-    %11:vec2<u16> = bitcast<vec2<u16>> %10
-    %12:u16 = access %11, 1u
-    %13:ptr<workgroup, u16, read_write> = access %v, 5u
-    store %13, %12
-    %14:bool = access vec2<bool>(false), 1u
-    %15:u32 = convert %14
-    %16:vec2<u16> = bitcast<vec2<u16>> %15
-    %17:u16 = access %16, 0u
-    %18:ptr<workgroup, u16, read_write> = access %v, 6u
-    store %18, %17
-    %19:bool = access vec2<bool>(false), 1u
-    %20:u32 = convert %19
-    %21:vec2<u16> = bitcast<vec2<u16>> %20
-    %22:u16 = access %21, 1u
-    %23:ptr<workgroup, u16, read_write> = access %v, 7u
-    store %23, %22
+    %l:vec2<bool> = let vec2<bool>(false)
+    %5:bool = access %l, 0u
+    %6:u32 = convert %5
+    %7:vec2<u16> = bitcast<vec2<u16>> %6
+    %8:u16 = access %7, 0u
+    %9:ptr<workgroup, u16, read_write> = access %v, 4u
+    store %9, %8 @align(8)
+    %10:bool = access %l, 0u
+    %11:u32 = convert %10
+    %12:vec2<u16> = bitcast<vec2<u16>> %11
+    %13:u16 = access %12, 1u
+    %14:ptr<workgroup, u16, read_write> = access %v, 5u
+    store %14, %13
+    %15:bool = access %l, 1u
+    %16:u32 = convert %15
+    %17:vec2<u16> = bitcast<vec2<u16>> %16
+    %18:u16 = access %17, 0u
+    %19:ptr<workgroup, u16, read_write> = access %v, 6u
+    store %19, %18
+    %20:bool = access %l, 1u
+    %21:u32 = convert %20
+    %22:vec2<u16> = bitcast<vec2<u16>> %21
+    %23:u16 = access %22, 1u
+    %24:ptr<workgroup, u16, read_write> = access %v, 7u
+    store %24, %23
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4794,9 +4788,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_StoreVec3b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
+        auto* l = b.Let("l", b.Zero(ty.vec3(ty.bool_())));
         b.Store(
             b.Access(ty.ptr(workgroup, ty.vec3(ty.bool_()), core::Access::kReadWrite), var, 1_u),
-            b.Zero(ty.vec3(ty.bool_())));
+            l);
         b.Return(func);
     });
 
@@ -4814,8 +4809,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<workgroup, vec3<bool>, read_write> = access %v, 1u
-    store %4, vec3<bool>(false)
+    %l:vec3<bool> = let vec3<bool>(false)
+    %5:ptr<workgroup, vec3<bool>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4837,49 +4833,49 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:bool = access vec3<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:vec2<u16> = bitcast<vec2<u16>> %5
-    %7:u16 = access %6, 0u
-    %8:ptr<workgroup, u16, read_write> = access %v, 8u
-    store %8, %7
-    %9:bool = access vec3<bool>(false), 0u
-    %10:u32 = convert %9
-    %11:vec2<u16> = bitcast<vec2<u16>> %10
-    %12:u16 = access %11, 1u
-    %13:ptr<workgroup, u16, read_write> = access %v, 9u
-    store %13, %12
-    %14:bool = access vec3<bool>(false), 1u
-    %15:u32 = convert %14
-    %16:vec2<u16> = bitcast<vec2<u16>> %15
-    %17:u16 = access %16, 0u
-    %18:ptr<workgroup, u16, read_write> = access %v, 10u
-    store %18, %17
-    %19:bool = access vec3<bool>(false), 1u
-    %20:u32 = convert %19
-    %21:vec2<u16> = bitcast<vec2<u16>> %20
-    %22:u16 = access %21, 1u
-    %23:ptr<workgroup, u16, read_write> = access %v, 11u
-    store %23, %22
-    %24:bool = access vec3<bool>(false), 2u
-    %25:u32 = convert %24
-    %26:vec2<u16> = bitcast<vec2<u16>> %25
-    %27:u16 = access %26, 0u
-    %28:ptr<workgroup, u16, read_write> = access %v, 12u
-    store %28, %27
-    %29:bool = access vec3<bool>(false), 2u
-    %30:u32 = convert %29
-    %31:vec2<u16> = bitcast<vec2<u16>> %30
-    %32:u16 = access %31, 1u
-    %33:ptr<workgroup, u16, read_write> = access %v, 13u
-    store %33, %32
+    %l:vec3<bool> = let vec3<bool>(false)
+    %5:bool = access %l, 0u
+    %6:u32 = convert %5
+    %7:vec2<u16> = bitcast<vec2<u16>> %6
+    %8:u16 = access %7, 0u
+    %9:ptr<workgroup, u16, read_write> = access %v, 8u
+    store %9, %8 @align(16)
+    %10:bool = access %l, 0u
+    %11:u32 = convert %10
+    %12:vec2<u16> = bitcast<vec2<u16>> %11
+    %13:u16 = access %12, 1u
+    %14:ptr<workgroup, u16, read_write> = access %v, 9u
+    store %14, %13
+    %15:bool = access %l, 1u
+    %16:u32 = convert %15
+    %17:vec2<u16> = bitcast<vec2<u16>> %16
+    %18:u16 = access %17, 0u
+    %19:ptr<workgroup, u16, read_write> = access %v, 10u
+    store %19, %18
+    %20:bool = access %l, 1u
+    %21:u32 = convert %20
+    %22:vec2<u16> = bitcast<vec2<u16>> %21
+    %23:u16 = access %22, 1u
+    %24:ptr<workgroup, u16, read_write> = access %v, 11u
+    store %24, %23
+    %25:bool = access %l, 2u
+    %26:u32 = convert %25
+    %27:vec2<u16> = bitcast<vec2<u16>> %26
+    %28:u16 = access %27, 0u
+    %29:ptr<workgroup, u16, read_write> = access %v, 12u
+    store %29, %28
+    %30:bool = access %l, 2u
+    %31:u32 = convert %30
+    %32:vec2<u16> = bitcast<vec2<u16>> %31
+    %33:u16 = access %32, 1u
+    %34:ptr<workgroup, u16, read_write> = access %v, 13u
+    store %34, %33
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -4895,9 +4891,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU16_StoreVec4b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(workgroup, ty.u16(), core::Access::kReadWrite), var, 0_u), u16(0));
+        auto* l = b.Let("l", b.Zero(ty.vec4(ty.bool_())));
         b.Store(
             b.Access(ty.ptr(workgroup, ty.vec4(ty.bool_()), core::Access::kReadWrite), var, 1_u),
-            b.Zero(ty.vec4(ty.bool_())));
+            l);
         b.Return(func);
     });
 
@@ -4915,8 +4912,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:ptr<workgroup, vec4<bool>, read_write> = access %v, 1u
-    store %4, vec4<bool>(false)
+    %l:vec4<bool> = let vec4<bool>(false)
+    %5:ptr<workgroup, vec4<bool>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -4938,61 +4936,61 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u16, read_write> = access %v, 0u
     store %3, 0u16
-    %4:bool = access vec4<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:vec2<u16> = bitcast<vec2<u16>> %5
-    %7:u16 = access %6, 0u
-    %8:ptr<workgroup, u16, read_write> = access %v, 8u
-    store %8, %7
-    %9:bool = access vec4<bool>(false), 0u
-    %10:u32 = convert %9
-    %11:vec2<u16> = bitcast<vec2<u16>> %10
-    %12:u16 = access %11, 1u
-    %13:ptr<workgroup, u16, read_write> = access %v, 9u
-    store %13, %12
-    %14:bool = access vec4<bool>(false), 1u
-    %15:u32 = convert %14
-    %16:vec2<u16> = bitcast<vec2<u16>> %15
-    %17:u16 = access %16, 0u
-    %18:ptr<workgroup, u16, read_write> = access %v, 10u
-    store %18, %17
-    %19:bool = access vec4<bool>(false), 1u
-    %20:u32 = convert %19
-    %21:vec2<u16> = bitcast<vec2<u16>> %20
-    %22:u16 = access %21, 1u
-    %23:ptr<workgroup, u16, read_write> = access %v, 11u
-    store %23, %22
-    %24:bool = access vec4<bool>(false), 2u
-    %25:u32 = convert %24
-    %26:vec2<u16> = bitcast<vec2<u16>> %25
-    %27:u16 = access %26, 0u
-    %28:ptr<workgroup, u16, read_write> = access %v, 12u
-    store %28, %27
-    %29:bool = access vec4<bool>(false), 2u
-    %30:u32 = convert %29
-    %31:vec2<u16> = bitcast<vec2<u16>> %30
-    %32:u16 = access %31, 1u
-    %33:ptr<workgroup, u16, read_write> = access %v, 13u
-    store %33, %32
-    %34:bool = access vec4<bool>(false), 3u
-    %35:u32 = convert %34
-    %36:vec2<u16> = bitcast<vec2<u16>> %35
-    %37:u16 = access %36, 0u
-    %38:ptr<workgroup, u16, read_write> = access %v, 14u
-    store %38, %37
-    %39:bool = access vec4<bool>(false), 3u
-    %40:u32 = convert %39
-    %41:vec2<u16> = bitcast<vec2<u16>> %40
-    %42:u16 = access %41, 1u
-    %43:ptr<workgroup, u16, read_write> = access %v, 15u
-    store %43, %42
+    %l:vec4<bool> = let vec4<bool>(false)
+    %5:bool = access %l, 0u
+    %6:u32 = convert %5
+    %7:vec2<u16> = bitcast<vec2<u16>> %6
+    %8:u16 = access %7, 0u
+    %9:ptr<workgroup, u16, read_write> = access %v, 8u
+    store %9, %8 @align(16)
+    %10:bool = access %l, 0u
+    %11:u32 = convert %10
+    %12:vec2<u16> = bitcast<vec2<u16>> %11
+    %13:u16 = access %12, 1u
+    %14:ptr<workgroup, u16, read_write> = access %v, 9u
+    store %14, %13
+    %15:bool = access %l, 1u
+    %16:u32 = convert %15
+    %17:vec2<u16> = bitcast<vec2<u16>> %16
+    %18:u16 = access %17, 0u
+    %19:ptr<workgroup, u16, read_write> = access %v, 10u
+    store %19, %18
+    %20:bool = access %l, 1u
+    %21:u32 = convert %20
+    %22:vec2<u16> = bitcast<vec2<u16>> %21
+    %23:u16 = access %22, 1u
+    %24:ptr<workgroup, u16, read_write> = access %v, 11u
+    store %24, %23
+    %25:bool = access %l, 2u
+    %26:u32 = convert %25
+    %27:vec2<u16> = bitcast<vec2<u16>> %26
+    %28:u16 = access %27, 0u
+    %29:ptr<workgroup, u16, read_write> = access %v, 12u
+    store %29, %28
+    %30:bool = access %l, 2u
+    %31:u32 = convert %30
+    %32:vec2<u16> = bitcast<vec2<u16>> %31
+    %33:u16 = access %32, 1u
+    %34:ptr<workgroup, u16, read_write> = access %v, 13u
+    store %34, %33
+    %35:bool = access %l, 3u
+    %36:u32 = convert %35
+    %37:vec2<u16> = bitcast<vec2<u16>> %36
+    %38:u16 = access %37, 0u
+    %39:ptr<workgroup, u16, read_write> = access %v, 14u
+    store %39, %38
+    %40:bool = access %l, 3u
+    %41:u32 = convert %40
+    %42:vec2<u16> = bitcast<vec2<u16>> %41
+    %43:u16 = access %42, 1u
+    %44:ptr<workgroup, u16, read_write> = access %v, 15u
+    store %44, %43
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5051,19 +5049,16 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:u32 = access vec2<u32>(0u), 0u
-    %5:ptr<storage, u32, read_write> = access %v, 2u
-    store %5, %4
-    %6:u32 = access vec2<u32>(0u), 1u
-    %7:ptr<storage, u32, read_write> = access %v, 3u
-    store %7, %6
+    %4:ptr<storage, u32, read_write> = access %v, 2u
+    store %4, 0u @align(8)
+    %5:ptr<storage, u32, read_write> = access %v, 3u
+    store %5, 0u
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5080,8 +5075,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreVec3u) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u), u32(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec3u()));
+        auto* l = b.Let("l", b.Zero(ty.vec3u()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec3u(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -5099,8 +5094,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:ptr<storage, vec3<u32>, read_write> = access %v, 1u
-    store %4, vec3<u32>(0u)
+    %l:vec3<u32> = let vec3<u32>(0u)
+    %5:ptr<storage, vec3<u32>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -5122,22 +5118,22 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:u32 = access vec3<u32>(0u), 0u
-    %5:ptr<storage, u32, read_write> = access %v, 4u
-    store %5, %4
-    %6:u32 = access vec3<u32>(0u), 1u
-    %7:ptr<storage, u32, read_write> = access %v, 5u
-    store %7, %6
-    %8:u32 = access vec3<u32>(0u), 2u
-    %9:ptr<storage, u32, read_write> = access %v, 6u
-    store %9, %8
+    %l:vec3<u32> = let vec3<u32>(0u)
+    %5:u32 = access %l, 0u
+    %6:ptr<storage, u32, read_write> = access %v, 4u
+    store %6, %5 @align(16)
+    %7:u32 = access %l, 1u
+    %8:ptr<storage, u32, read_write> = access %v, 5u
+    store %8, %7
+    %9:u32 = access %l, 2u
+    %10:ptr<storage, u32, read_write> = access %v, 6u
+    store %10, %9
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5196,30 +5192,25 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:u32 = access vec4<u32>(0u), 0u
-    %5:ptr<storage, u32, read_write> = access %v, 4u
-    store %5, %4
-    %6:u32 = access vec4<u32>(0u), 1u
-    %7:ptr<storage, u32, read_write> = access %v, 5u
-    store %7, %6
-    %8:u32 = access vec4<u32>(0u), 2u
-    %9:ptr<storage, u32, read_write> = access %v, 6u
-    store %9, %8
-    %10:u32 = access vec4<u32>(0u), 3u
-    %11:ptr<storage, u32, read_write> = access %v, 7u
-    store %11, %10
+    %4:ptr<storage, u32, read_write> = access %v, 4u
+    store %4, 0u @align(16)
+    %5:ptr<storage, u32, read_write> = access %v, 5u
+    store %5, 0u
+    %6:ptr<storage, u32, read_write> = access %v, 6u
+    store %6, 0u
+    %7:ptr<storage, u32, read_write> = access %v, 7u
+    store %7, 0u
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
-TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreVec2h) {
+TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec2h_WithU32) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
                                                     {mod.symbols.New("a"), ty.u32()},
                                                     {mod.symbols.New("b"), ty.vec2h()},
@@ -5231,8 +5222,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreVec2h) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u), u32(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec2h()));
+        auto* l = b.Let("l", b.Zero(ty.vec2h()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec2h(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -5250,8 +5241,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:ptr<storage, vec2<f16>, read_write> = access %v, 1u
-    store %4, vec2<f16>(0.0h)
+    %l:vec2<f16> = let vec2<f16>(0.0h)
+    %5:ptr<storage, vec2<f16>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -5266,31 +5258,37 @@ SB = struct @align(4) {
 }
 
 $B1: {  # root
-  %v:ptr<storage, array<u32, 2>, read_write> = var undef @binding_point(0, 0)
+  %v:ptr<storage, array<u16, 4>, read_write> = var undef @binding_point(0, 0)
 }
 
 %foo = @fragment func():void {
   $B2: {
-    %3:ptr<storage, u32, read_write> = access %v, 0u
-    store %3, 0u
-    %4:u32 = bitcast<u32> vec2<f16>(0.0h)
-    %5:ptr<storage, u32, read_write> = access %v, 1u
-    store %5, %4
+    %3:ptr<storage, u16, read_write> = access %v, 0u
+    store %3, 0u16 @align(4)
+    %4:ptr<storage, u16, read_write> = access %v, 1u
+    store %4, 0u16
+    %l:vec2<f16> = let vec2<f16>(0.0h)
+    %6:f16 = access %l, 0u
+    %7:u16 = bitcast<u16> %6
+    %8:ptr<storage, u16, read_write> = access %v, 2u
+    store %8, %7 @align(4)
+    %9:f16 = access %l, 1u
+    %10:u16 = bitcast<u16> %9
+    %11:ptr<storage, u16, read_write> = access %v, 3u
+    store %11, %10
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
-// Note: No Storage_AccessU32_StoreVec3h (vec3<f16> uses u16, SmallestElementSize=2; covered by
-// Storage_AccessU16_StoreVec3h above).
+// Note: vec4<f16> also uses u16 (SmallestElementSize=2, due to Width==4 && Type()->Size()==2).
 
-TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreVec4h) {
+TEST_F(IR_DecomposeAccessTest, Storage_AccessU16_StoreVec4h_WithU32) {
     auto* sb = ty.Struct(mod.symbols.New("SB"), {
                                                     {mod.symbols.New("a"), ty.u32()},
                                                     {mod.symbols.New("b"), ty.vec4h()},
@@ -5302,8 +5300,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessU32_StoreVec4h) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), var, 0_u), u32(0));
-        b.Store(b.Access(ty.ptr(storage, ty.vec4h(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec4h()));
+        auto* l = b.Let("l", b.Zero(ty.vec4h()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec4h(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -5321,8 +5319,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:ptr<storage, vec4<f16>, read_write> = access %v, 1u
-    store %4, vec4<f16>(0.0h)
+    %l:vec4<f16> = let vec4<f16>(0.0h)
+    %5:ptr<storage, vec4<f16>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -5337,27 +5336,38 @@ SB = struct @align(8) {
 }
 
 $B1: {  # root
-  %v:ptr<storage, array<u32, 4>, read_write> = var undef @binding_point(0, 0)
+  %v:ptr<storage, array<u16, 8>, read_write> = var undef @binding_point(0, 0)
 }
 
 %foo = @fragment func():void {
   $B2: {
-    %3:ptr<storage, u32, read_write> = access %v, 0u
-    store %3, 0u
-    %4:vec2<u32> = bitcast<vec2<u32>> vec4<f16>(0.0h)
-    %5:u32 = access %4, 0u
-    %6:ptr<storage, u32, read_write> = access %v, 2u
-    store %6, %5
-    %7:u32 = access %4, 1u
-    %8:ptr<storage, u32, read_write> = access %v, 3u
-    store %8, %7
+    %3:ptr<storage, u16, read_write> = access %v, 0u
+    store %3, 0u16 @align(4)
+    %4:ptr<storage, u16, read_write> = access %v, 1u
+    store %4, 0u16
+    %l:vec4<f16> = let vec4<f16>(0.0h)
+    %6:f16 = access %l, 0u
+    %7:u16 = bitcast<u16> %6
+    %8:ptr<storage, u16, read_write> = access %v, 4u
+    store %8, %7 @align(8)
+    %9:f16 = access %l, 1u
+    %10:u16 = bitcast<u16> %9
+    %11:ptr<storage, u16, read_write> = access %v, 5u
+    store %11, %10
+    %12:f16 = access %l, 2u
+    %13:u16 = bitcast<u16> %12
+    %14:ptr<storage, u16, read_write> = access %v, 6u
+    store %14, %13
+    %15:f16 = access %l, 3u
+    %16:u16 = bitcast<u16> %15
+    %17:ptr<storage, u16, read_write> = access %v, 7u
+    store %17, %16
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5416,21 +5426,16 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:bool = access vec2<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:ptr<workgroup, u32, read_write> = access %v, 2u
-    store %6, %5
-    %7:bool = access vec2<bool>(false), 1u
-    %8:u32 = convert %7
-    %9:ptr<workgroup, u32, read_write> = access %v, 3u
-    store %9, %8
+    %4:ptr<workgroup, u32, read_write> = access %v, 2u
+    store %4, 0u @align(8)
+    %5:ptr<workgroup, u32, read_write> = access %v, 3u
+    store %5, 0u
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5446,9 +5451,10 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_AccessU32_StoreVec3b) {
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u), u32(0));
+        auto* l = b.Let("l", b.Zero(ty.vec3(ty.bool_())));
         b.Store(
             b.Access(ty.ptr(workgroup, ty.vec3(ty.bool_()), core::Access::kReadWrite), var, 1_u),
-            b.Zero(ty.vec3(ty.bool_())));
+            l);
         b.Return(func);
     });
 
@@ -5466,8 +5472,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:ptr<workgroup, vec3<bool>, read_write> = access %v, 1u
-    store %4, vec3<bool>(false)
+    %l:vec3<bool> = let vec3<bool>(false)
+    %5:ptr<workgroup, vec3<bool>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -5489,25 +5496,25 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:bool = access vec3<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:ptr<workgroup, u32, read_write> = access %v, 4u
-    store %6, %5
-    %7:bool = access vec3<bool>(false), 1u
-    %8:u32 = convert %7
-    %9:ptr<workgroup, u32, read_write> = access %v, 5u
-    store %9, %8
-    %10:bool = access vec3<bool>(false), 2u
-    %11:u32 = convert %10
-    %12:ptr<workgroup, u32, read_write> = access %v, 6u
-    store %12, %11
+    %l:vec3<bool> = let vec3<bool>(false)
+    %5:bool = access %l, 0u
+    %6:u32 = convert %5
+    %7:ptr<workgroup, u32, read_write> = access %v, 4u
+    store %7, %6 @align(16)
+    %8:bool = access %l, 1u
+    %9:u32 = convert %8
+    %10:ptr<workgroup, u32, read_write> = access %v, 5u
+    store %10, %9
+    %11:bool = access %l, 2u
+    %12:u32 = convert %11
+    %13:ptr<workgroup, u32, read_write> = access %v, 6u
+    store %13, %12
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5566,29 +5573,20 @@ $B1: {  # root
   $B2: {
     %3:ptr<workgroup, u32, read_write> = access %v, 0u
     store %3, 0u
-    %4:bool = access vec4<bool>(false), 0u
-    %5:u32 = convert %4
-    %6:ptr<workgroup, u32, read_write> = access %v, 4u
-    store %6, %5
-    %7:bool = access vec4<bool>(false), 1u
-    %8:u32 = convert %7
-    %9:ptr<workgroup, u32, read_write> = access %v, 5u
-    store %9, %8
-    %10:bool = access vec4<bool>(false), 2u
-    %11:u32 = convert %10
-    %12:ptr<workgroup, u32, read_write> = access %v, 6u
-    store %12, %11
-    %13:bool = access vec4<bool>(false), 3u
-    %14:u32 = convert %13
-    %15:ptr<workgroup, u32, read_write> = access %v, 7u
-    store %15, %14
+    %4:ptr<workgroup, u32, read_write> = access %v, 4u
+    store %4, 0u @align(16)
+    %5:ptr<workgroup, u32, read_write> = access %v, 5u
+    store %5, 0u
+    %6:ptr<workgroup, u32, read_write> = access %v, 6u
+    store %6, 0u
+    %7:ptr<workgroup, u32, read_write> = access %v, 7u
+    store %7, 0u
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5606,8 +5604,8 @@ TEST_F(IR_DecomposeAccessTest, Storage_AccessVec2u_StoreVec4u) {
     b.Append(func->Block(), [&] {
         b.Store(b.Access(ty.ptr(storage, ty.vec2u(), core::Access::kReadWrite), var, 0_u),
                 b.Zero(ty.vec2u()));
-        b.Store(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u),
-                b.Zero(ty.vec4u()));
+        auto* l = b.Let("l", b.Zero(ty.vec4u()));
+        b.Store(b.Access(ty.ptr(storage, ty.vec4u(), core::Access::kReadWrite), var, 1_u), l);
         b.Return(func);
     });
 
@@ -5625,8 +5623,9 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, vec2<u32>, read_write> = access %v, 0u
     store %3, vec2<u32>(0u)
-    %4:ptr<storage, vec4<u32>, read_write> = access %v, 1u
-    store %4, vec4<u32>(0u)
+    %l:vec4<u32> = let vec4<u32>(0u)
+    %5:ptr<storage, vec4<u32>, read_write> = access %v, 1u
+    store %5, %l
     ret
   }
 }
@@ -5648,19 +5647,19 @@ $B1: {  # root
   $B2: {
     %3:ptr<storage, vec2<u32>, read_write> = access %v, 0u
     store %3, vec2<u32>(0u)
-    %4:vec2<u32> = swizzle vec4<u32>(0u), xy
-    %5:ptr<storage, vec2<u32>, read_write> = access %v, 2u
-    store %5, %4
-    %6:vec2<u32> = swizzle vec4<u32>(0u), zw
-    %7:ptr<storage, vec2<u32>, read_write> = access %v, 3u
-    store %7, %6
+    %l:vec4<u32> = let vec4<u32>(0u)
+    %5:vec2<u32> = swizzle %l, xy
+    %6:ptr<storage, vec2<u32>, read_write> = access %v, 2u
+    store %6, %5
+    %7:vec2<u32> = swizzle %l, zw
+    %8:ptr<storage, vec2<u32>, read_write> = access %v, 3u
+    store %8, %7
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5717,8 +5716,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5732,7 +5730,7 @@ TEST_F(IR_DecomposeAccessTest, Storage_UnsizedBuffer) {
     b.Append(func->Block(), [&] {
         auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
             ty.ptr(storage, ty.u32(), core::Access::kReadWrite), core::BuiltinFn::kBufferView,
-            Vector{ty.u32()}, var, 16_u);
+            Vector<TemplateParameter, 1>{ty.u32()}, var, 16_u);
         b.Store(call, 33_u);
         b.Return(func);
     });
@@ -5766,8 +5764,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5780,7 +5777,7 @@ TEST_F(IR_DecomposeAccessTest, Workgroup_SizedBuffer) {
     b.Append(func->Block(), [&] {
         auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
             ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), core::BuiltinFn::kBufferView,
-            Vector{ty.u32()}, var, 16_u);
+            Vector<TemplateParameter, 1>{ty.u32()}, var, 16_u);
         b.Store(call, 33_u);
         b.Return(func);
     });
@@ -5814,8 +5811,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.workgroup = true};
+    DecomposeAccessConfig options{.workgroup = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5829,7 +5825,7 @@ TEST_F(IR_DecomposeAccessTest, Uniform_SizedBuffer) {
     b.Append(func->Block(), [&] {
         auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
             ty.ptr(uniform, ty.u32(), core::Access::kRead), core::BuiltinFn::kBufferView,
-            Vector{ty.u32()}, var, 36_u);
+            Vector<TemplateParameter, 1>{ty.u32()}, var, 36_u);
         b.Load(call);
         b.Return(func);
     });
@@ -5863,8 +5859,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5877,7 +5872,7 @@ TEST_F(IR_DecomposeAccessTest, BufferLength_Sized_FromType) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kBufferLength, var);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -5909,8 +5904,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5923,7 +5917,7 @@ TEST_F(IR_DecomposeAccessTest, BufferLength_Unsized) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kBufferLength, var);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -5944,21 +5938,20 @@ $B1: {  # root
 
     auto* expect = R"(
 $B1: {  # root
-  %v:ptr<storage, array<vec4<u32>>, read> = var undef @binding_point(0, 0)
+  %v:ptr<storage, array<u32>, read> = var undef @binding_point(0, 0)
 }
 
 %foo = @fragment func():void {
   $B2: {
     %3:u32 = arrayLength %v
-    %4:u32 = mul %3, 16u
+    %4:u32 = mul %3, 4u
     %a:u32 = let %4
     ret
   }
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -5971,7 +5964,7 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_U32) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, var);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6004,8 +5997,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6018,7 +6010,7 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_F16) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, var);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6051,8 +6043,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6069,7 +6060,7 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_StructMinF16) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, var);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6113,8 +6104,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6138,7 +6128,7 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_StructMinF16_Offset_Access) {
         auto* call =
             b.Call(ty.u32(), core::BuiltinFn::kArrayLength,
                    b.Access(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead), var, 1_u));
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6194,8 +6184,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6215,11 +6204,11 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_StructMinF16_Offset_BufferView) {
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* view =
-            b.CallExplicit(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead),
-                           core::BuiltinFn::kBufferView, Vector{ty.runtime_array(sb)}, var, 64_u);
+        auto* view = b.CallExplicit(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead),
+                                    core::BuiltinFn::kBufferView,
+                                    Vector<TemplateParameter, 1>{ty.runtime_array(sb)}, var, 64_u);
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, view);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6275,8 +6264,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6299,11 +6287,12 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_StructMinF16_Offset_BufferView_Runtim
 
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
-        auto* view = b.CallExplicit(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead),
-                                    core::BuiltinFn::kBufferView, Vector{ty.runtime_array(sb)}, var,
-                                    b.Load(val));
+        auto* view =
+            b.CallExplicit(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead),
+                           core::BuiltinFn::kBufferView,
+                           Vector<TemplateParameter, 1>{ty.runtime_array(sb)}, var, b.Load(val));
         auto* call = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, view);
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6365,8 +6354,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6391,11 +6379,12 @@ TEST_F(IR_DecomposeAccessTest, ArrayLength_StructMinF16_Offset_Both) {
     auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
     b.Append(func->Block(), [&] {
         auto* view = b.CallExplicit(ty.ptr(storage, outer, core::Access::kRead),
-                                    core::BuiltinFn::kBufferView, Vector{outer}, var, b.Load(val));
+                                    core::BuiltinFn::kBufferView,
+                                    Vector<TemplateParameter, 1>{outer}, var, b.Load(val));
         auto* call =
             b.Call(ty.u32(), core::BuiltinFn::kArrayLength,
                    b.Access(ty.ptr(storage, ty.runtime_array(sb), core::Access::kRead), view, 1_u));
-        b.Let("a", call->Result());
+        b.Let("a", call);
         b.Return(func);
     });
 
@@ -6459,8 +6448,7 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.storage = true};
+    DecomposeAccessConfig options{.storage = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
@@ -6554,11 +6542,3020 @@ $B1: {  # root
 }
 )";
 
-    capabilities.Add(Capability::kAllow16BitIntegers);
-    DecomposeAccessOptions options{.uniform = true};
+    DecomposeAccessConfig options{.uniform = true};
     Run(DecomposeAccess, options);
     EXPECT_EQ(expect, str());
 }
 
+TEST_F(IR_DecomposeAccessTest, BufferArrayView_Basic_U32) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.array<u32>();
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* access = b.Access(ty.ptr(storage, ty.u32(), core::Access::kReadWrite), call, 5_u);
+        b.Load(access);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<u32>, read_write> = bufferArrayView<array<u32>> %v, 16u, 100u
+    %4:ptr<storage, u32, read_write> = access %3, 5u
+    %5:u32 = load %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, u32, read_write> = access %v, 9u
+    %4:u32 = load %3
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, BufferArrayView_Basic_Vec4f) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.runtime_array(ty.vec4(ty.f32()));
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* access =
+            b.Access(ty.ptr(storage, ty.vec4(ty.f32()), core::Access::kReadWrite), call, 5_u);
+        b.Load(access);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<vec4<f32>>, read_write> = bufferArrayView<array<vec4<f32>>> %v, 16u, 100u
+    %4:ptr<storage, vec4<f32>, read_write> = access %3, 5u
+    %5:vec4<f32> = load %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<vec4<u32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, vec4<u32>, read_write> = access %v, 6u
+    %4:vec4<u32> = load %3
+    %5:vec4<f32> = bitcast<vec4<f32>> %4
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, BufferArrayView_Basic_Struct) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* str_ = ty.Struct(mod.symbols.New("S"), {
+                                                     {mod.symbols.Register("a"), ty.vec4(ty.f32())},
+                                                     {mod.symbols.Register("b"), ty.vec4(ty.f32())},
+                                                 });
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.runtime_array(str_);
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* access = b.Access(ty.ptr(storage, str_, core::Access::kReadWrite), call, 5_u);
+        b.Load(access);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:vec4<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<S>, read_write> = bufferArrayView<array<S>> %v, 16u, 100u
+    %4:ptr<storage, S, read_write> = access %3, 5u
+    %5:S = load %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:vec4<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<vec4<u32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:S = call %4, 176u
+    ret
+  }
+}
+%4 = func(%start_byte_offset:u32):S {
+  $B3: {
+    %6:u32 = div %start_byte_offset, 16u
+    %7:ptr<storage, vec4<u32>, read_write> = access %v, %6
+    %8:vec4<u32> = load %7
+    %9:vec4<f32> = bitcast<vec4<f32>> %8
+    %10:u32 = add 16u, %start_byte_offset
+    %11:u32 = div %10, 16u
+    %12:ptr<storage, vec4<u32>, read_write> = access %v, %11
+    %13:vec4<u32> = load %12
+    %14:vec4<f32> = bitcast<vec4<f32>> %13
+    %15:S = construct %9, %14
+    ret %15
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ArrayLength_BufferArrayView_Size_U32) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.array<u32>();
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* len = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, call);
+        b.Let("a", len);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<u32>, read_write> = bufferArrayView<array<u32>> %v, 16u, 100u
+    %4:u32 = arrayLength %3
+    %a:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %a:u32 = let 25u
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ArrayLength_BufferArrayView_Size_Vec4f) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.runtime_array(ty.vec4(ty.f32()));
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* len = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, call);
+        b.Let("a", len);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<vec4<f32>>, read_write> = bufferArrayView<array<vec4<f32>>> %v, 16u, 100u
+    %4:u32 = arrayLength %3
+    %a:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<vec4<u32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %a:u32 = let 6u
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ArrayLength_BufferArrayView_Size_Struct) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* str_ = ty.Struct(mod.symbols.New("S"), {
+                                                     {mod.symbols.Register("a"), ty.vec4(ty.f32())},
+                                                     {mod.symbols.Register("b"), ty.vec4(ty.f32())},
+                                                 });
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.runtime_array(str_);
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, arr_ty, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{arr_ty}, var, 16_u, 100_u);
+        auto* len = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, call);
+        b.Let("a", len);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:vec4<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<S>, read_write> = bufferArrayView<array<S>> %v, 16u, 100u
+    %4:u32 = arrayLength %3
+    %a:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:vec4<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<vec4<u32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %a:u32 = let 3u
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ArrayLength_BufferArrayView_Size_RuntimeStruct) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* str_ =
+        ty.Struct(mod.symbols.New("S"), {
+                                            {mod.symbols.Register("a"), ty.vec4(ty.f32())},
+                                            {mod.symbols.Register("b"), ty.runtime_array(ty.f32())},
+                                        });
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* size = b.FunctionParam("size", ty.u32());
+    func->SetParams({offset, size});
+    b.Append(func->Block(), [&] {
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, str_, core::Access::kReadWrite), core::BuiltinFn::kBufferArrayView,
+            Vector<TemplateParameter, 1>{str_}, var, offset, size);
+        auto* access = b.Access(ty.ptr(storage, ty.runtime_array(ty.f32())), call, 1_u);
+        auto* len = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, access);
+        b.Let("a", len);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:array<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%offset:u32, %size:u32):void {
+  $B2: {
+    %5:ptr<storage, S, read_write> = bufferArrayView<S> %v, %offset, %size
+    %6:ptr<storage, array<f32>, read_write> = access %5, 1u
+    %7:u32 = arrayLength %6
+    %a:u32 = let %7
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:array<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%offset:u32, %size:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 1u
+    %6:u32 = sub %size, 16u
+    %7:u32 = div %6, 4u
+    %a:u32 = let %7
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ArrayLength_BufferView_Length_U32) {
+    auto* var = b.Var("v", storage, ty.unsized_buffer(), core::Access::kReadWrite);
+    var->SetBindingPoint(0, 0);
+    b.ir.root_block->Append(var);
+
+    auto* str_ =
+        ty.Struct(mod.symbols.New("S"), {
+                                            {mod.symbols.Register("a"), ty.vec4(ty.f32())},
+                                            {mod.symbols.Register("b"), ty.runtime_array(ty.f32())},
+                                        });
+
+    auto* func = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* length = b.FunctionParam("length", ty.u32());
+    func->SetParams({offset, length});
+    b.Append(func->Block(), [&] {
+        auto* arr_ty = ty.runtime_array(ty.f32());
+        auto* call = b.CallExplicit<core::ir::CoreBuiltinCall>(
+            ty.ptr(storage, str_, core::Access::kReadWrite), core::BuiltinFn::kBufferView,
+            Vector<TemplateParameter, 1>{str_}, var, offset, length);
+        auto* access = b.Access(ty.ptr(storage, arr_ty), call, 1_u);
+        auto* len = b.Call(ty.u32(), core::BuiltinFn::kArrayLength, access);
+        b.Let("a", len);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:array<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, buffer, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%offset:u32, %length:u32):void {
+  $B2: {
+    %5:ptr<storage, S, read_write> = bufferView<S> %v, %offset, %length
+    %6:ptr<storage, array<f32>, read_write> = access %5, 1u
+    %7:u32 = arrayLength %6
+    %a:u32 = let %7
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:array<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%offset:u32, %length:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 1u
+    %6:u32 = add 16u, %5
+    %7:u32 = sub %length, %6
+    %8:u32 = div %7, 4u
+    %a:u32 = let %8
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_PhonyLoad_ArrayOfMat2x2F16_Skipped) {
+    auto* arr_ty = ty.array(ty.mat2x2<f16>(), 2048);
+    auto* var = b.Var("d0", workgroup, arr_ty, core::Access::kReadWrite);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.ComputeFunction("main");
+    b.Append(func->Block(), [&] {
+        b.Load(var);  // phony: `_ = d0;`
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %d0:ptr<workgroup, array<mat2x2<f16>, 2048>, read_write> = var undef
+}
+
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B2: {
+    %3:array<mat2x2<f16>, 2048> = load %d0
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %d0:ptr<workgroup, array<u16, 8192>, read_write> = var undef
+}
+
+%main = @compute @workgroup_size(1u, 1u, 1u) func():void {
+  $B2: {
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_PhonyLoad_Scalar_NotSkipped) {
+    auto* var = b.Var("v", workgroup, ty.u32(), core::Access::kReadWrite);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        b.Load(var);  // phony: `_ = v;`
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, u32, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:u32 = load %v
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 1>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<workgroup, u32, read_write> = access %v, 0u
+    %4:u32 = load %3
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_UsedArrayElementLoad_NotSkipped) {
+    auto* var = b.Var("v", workgroup, ty.array<u32, 4>(), core::Access::kReadWrite);
+    b.ir.root_block->Append(var);
+
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        // Load one element of the array and bind the result via `let` -> the result is used.
+        auto* access = b.Access(ty.ptr(workgroup, ty.u32(), core::Access::kReadWrite), var, 0_u);
+        b.Let("a", b.Load(access));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 4>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<workgroup, u32, read_write> = access %v, 0u
+    %4:u32 = load %3
+    %a:u32 = let %4
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 4>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<workgroup, u32, read_write> = access %v, 0u
+    %4:u32 = load %3
+    %a:u32 = let %4
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix) {
+    // Subgroup matrix load/store should be no-ops.
+    auto* var = b.Var("v", workgroup, ty.array<u32, 1024>());
+    b.ir.root_block->Append(var);
+
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.u32(), 8, 8);
+    auto* func = b.Function("foo", ty.void_());
+    b.Append(func->Block(), [&] {
+        auto* ld = b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                                  Vector<TemplateParameter, 2>{mat_ty, core::Majorness::kRowMajor},
+                                  var, 0_u, 8_u);
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{core::Majorness::kRowMajor}, var, 0_u, ld, 8_u);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 1024>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:subgroup_matrix_left<u32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u32, 8, 8>, row_major> %v, 0u, 8u
+    %4:void = subgroupMatrixStore<row_major> %v, 0u, %3, 8u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 1024>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:subgroup_matrix_left<u32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u32, 8, 8>, row_major> %v, 0u, 8u
+    %4:void = subgroupMatrixStore<row_major> %v, 0u, %3, 8u
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_U8_Buffer) {
+    auto* v = b.Var("v", workgroup, ty.buffer(1024));
+    mod.root_block->Append(v);
+
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.u8(), 8, 8);
+    auto* func = b.Function("foo", ty.void_());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* b_offset = b.FunctionParam("b_offset", ty.u32());
+    auto* m_offset = b.FunctionParam("m_offset", ty.u32());
+    auto* m_stride = b.FunctionParam("m_stride", ty.u32());
+    func->SetParams({m, b_offset, m_offset, m_stride});
+    b.Append(func->Block(), [&] {
+        auto* view =
+            b.CallExplicit(ty.ptr(workgroup, ty.runtime_array(ty.u32())), BuiltinFn::kBufferView,
+                           Vector<TemplateParameter, 1>{ty.runtime_array(ty.u32())}, v, b_offset);
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, view, m_offset, m,
+                       m_stride);
+        b.Return(func);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, buffer<1024>, read_write> = var undef
+}
+
+%foo = func(%m:subgroup_matrix_left<u8, 8, 8>, %b_offset:u32, %m_offset:u32, %m_stride:u32):void {
+  $B2: {
+    %7:ptr<workgroup, array<u32>, read_write> = bufferView<array<u32>> %v, %b_offset
+    %8:void = subgroupMatrixStore<col_major> %7, %m_offset, %m, %m_stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 256>, read_write> = var undef
+}
+
+%foo = func(%m:subgroup_matrix_left<u8, 8, 8>, %b_offset:u32, %m_offset:u32, %m_stride:u32):void {
+  $B2: {
+    %7:u32 = mul %b_offset, 1u
+    %8:u32 = div %7, 4u
+    %9:u32 = add %8, %m_offset
+    %10:void = subgroupMatrixStore<col_major> %v, %9, %m, %m_stride
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_U32_Buffer_SmallerAccess) {
+    mod.properties.Add(core::ir::Property::kAllow16BitFloats);
+    auto* S =
+        ty.Struct(mod.symbols.New("S"), {
+                                            {mod.symbols.New("a"), ty.f16()},
+                                            {mod.symbols.New("b"), ty.runtime_array(ty.u32())},
+                                        });
+    auto* v = b.Var("v", workgroup, ty.buffer(1024));
+    mod.root_block->Append(v);
+
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.u32(), 8, 8);
+    auto* func = b.Function("foo", ty.void_());
+    auto* b_offset = b.FunctionParam("b_offset", ty.u32());
+    auto* m_offset = b.FunctionParam("m_offset", ty.i32());
+    auto* m_stride = b.FunctionParam("m_stride", ty.i32());
+    func->SetParams({b_offset, m_offset, m_stride});
+    b.Append(func->Block(), [&] {
+        auto* view = b.CallExplicit(ty.ptr(workgroup, S), BuiltinFn::kBufferView,
+                                    Vector<TemplateParameter, 1>{S}, v, b_offset);
+        auto* access = b.Access(ty.ptr(workgroup, ty.runtime_array(ty.u32())), view, 1_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor}, access, m_offset,
+                       m_stride);
+        b.Load(b.Access(ty.ptr(workgroup, ty.f16()), view, 0_u));
+        b.Return(func);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<u32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, buffer<1024>, read_write> = var undef
+}
+
+%foo = func(%b_offset:u32, %m_offset:i32, %m_stride:i32):void {
+  $B2: {
+    %6:ptr<workgroup, S, read_write> = bufferView<S> %v, %b_offset
+    %7:ptr<workgroup, array<u32>, read_write> = access %6, 1u
+    %8:subgroup_matrix_left<u32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u32, 8, 8>, row_major> %7, %m_offset, %m_stride
+    %9:ptr<workgroup, f16, read_write> = access %6, 0u
+    %10:f16 = load %9
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<u32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 512>, read_write> = var undef
+}
+
+%foo = func(%b_offset:u32, %m_offset:i32, %m_stride:i32):void {
+  $B2: {
+    %6:u32 = mul %b_offset, 1u
+    %7:u32 = add 4u, %6
+    %8:u32 = div %7, 2u
+    %9:u32 = bitcast<u32> %m_offset
+    %10:u32 = mul %9, 4u
+    %11:u32 = div %10, 2u
+    %12:u32 = add %8, %11
+    %13:u32 = bitcast<u32> %m_stride
+    %14:u32 = mul %13, 4u
+    %15:u32 = div %14, 2u
+    %16:subgroup_matrix_left<u32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u32, 8, 8>, row_major> %v, %12, %15 @align(4)
+    %17:u32 = div %6, 2u
+    %18:ptr<workgroup, u16, read_write> = access %v, %17
+    %19:u16 = load %18
+    %20:f16 = bitcast<f16> %19
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Storage_SubgroupMatrix_F16_RuntimeArray_F32_Access_F32) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(storage, ty.runtime_array(ty.f32())));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({m, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, v, offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, array<f32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Storage_SubgroupMatrix_F16_RuntimeArray_Vec2F_Access_F32) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(storage, ty.runtime_array(ty.vec2f())));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({m, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, v, offset, m, stride);
+        b.LoadVectorElement(b.Access(ty.ptr(storage, ty.vec2f()), v, 0_u), 0_u);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, array<vec2<f32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    %7:ptr<storage, vec2<f32>, read_write> = access %v, 0u
+    %8:f32 = load_vector_element %7, 0u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:u32 = mul %offset, 8u
+    %7:u32 = div %6, 4u
+    %8:u32 = add 0u, %7
+    %9:u32 = mul %stride, 8u
+    %10:u32 = div %9, 4u
+    %11:void = subgroupMatrixStore<col_major> %v, %8, %m, %10 @align(8)
+    %12:ptr<storage, u32, read_write> = access %v, 0u
+    %13:u32 = load %12
+    %14:f32 = bitcast<f32> %13
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Storage_SubgroupMatrix_F16_RuntimeArray_Vec3F_Access_F32) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(storage, ty.runtime_array(ty.vec3f())));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({m, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, v, offset, m, stride);
+        b.LoadVectorElement(b.Access(ty.ptr(storage, ty.vec3f()), v, 0_u), 0_u);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, array<vec3<f32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    %7:ptr<storage, vec3<f32>, read_write> = access %v, 0u
+    %8:f32 = load_vector_element %7, 0u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:u32 = mul %offset, 16u
+    %7:u32 = div %6, 4u
+    %8:u32 = add 0u, %7
+    %9:u32 = mul %stride, 16u
+    %10:u32 = div %9, 4u
+    %11:void = subgroupMatrixStore<col_major> %v, %8, %m, %10 @align(16)
+    %12:ptr<storage, u32, read_write> = access %v, 0u
+    %13:u32 = load %12
+    %14:f32 = bitcast<f32> %13
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Storage_SubgroupMatrix_F16_RuntimeArray_Vec4F_Access_F32) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f16(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(storage, ty.runtime_array(ty.vec4f())));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* m = b.FunctionParam("m", mat_ty);
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({m, offset, stride});
+    b.Append(foo->Block(), [&] {
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, v, offset, m, stride);
+        b.LoadVectorElement(b.Access(ty.ptr(storage, ty.vec4f()), v, 0_u), 0_u);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<storage, array<vec4<f32>>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    %7:ptr<storage, vec4<f32>, read_write> = access %v, 0u
+    %8:f32 = load_vector_element %7, 0u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<storage, array<u32>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func(%m:subgroup_matrix_left<f16, 8, 8>, %offset:u32, %stride:u32):void {
+  $B2: {
+    %6:u32 = mul %offset, 16u
+    %7:u32 = div %6, 4u
+    %8:u32 = add 0u, %7
+    %9:u32 = mul %stride, 16u
+    %10:u32 = div %9, 4u
+    %11:void = subgroupMatrixStore<col_major> %v, %8, %m, %10 @align(16)
+    %12:ptr<storage, u32, read_write> = access %v, 0u
+    %13:u32 = load %12
+    %14:f32 = bitcast<f32> %13
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_F32_Array_U32_Access_F16) {
+    auto* arr_ty = ty.array(ty.u32(), 1024);
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.f16()},
+                                                  {mod.symbols.New("b"), arr_ty},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kRight, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(workgroup, arr_ty), v, 1_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor}, access, offset,
+                       stride);
+        access = b.Access(ty.ptr(workgroup, ty.f16()), v, 0_u);
+        b.Load(access);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<u32, 1024> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:ptr<workgroup, array<u32, 1024>, read_write> = access %v, 1u
+    %6:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %5, %offset, %stride
+    %7:ptr<workgroup, f16, read_write> = access %v, 0u
+    %8:f16 = load %7
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<u32, 1024> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 2050>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 4u
+    %6:u32 = div %5, 2u
+    %7:u32 = add 2u, %6
+    %8:u32 = mul %stride, 4u
+    %9:u32 = div %8, 2u
+    %10:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %v, %7, %9 @align(4)
+    %11:ptr<workgroup, u16, read_write> = access %v, 0u
+    %12:u16 = load %11
+    %13:f16 = bitcast<f16> %12
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_F32_Array_Vec2U_Access_F16) {
+    auto* arr_ty = ty.array(ty.vec2u(), 1024);
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.f16()},
+                                                  {mod.symbols.New("b"), arr_ty},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kRight, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(workgroup, arr_ty), v, 1_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor}, access, offset,
+                       stride);
+        access = b.Access(ty.ptr(workgroup, ty.f16()), v, 0_u);
+        b.Load(access);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(8) {
+  a:f16 @offset(0)
+  b:array<vec2<u32>, 1024> @offset(8)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:ptr<workgroup, array<vec2<u32>, 1024>, read_write> = access %v, 1u
+    %6:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %5, %offset, %stride
+    %7:ptr<workgroup, f16, read_write> = access %v, 0u
+    %8:f16 = load %7
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(8) {
+  a:f16 @offset(0)
+  b:array<vec2<u32>, 1024> @offset(8)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 4100>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 8u
+    %6:u32 = div %5, 2u
+    %7:u32 = add 4u, %6
+    %8:u32 = mul %stride, 8u
+    %9:u32 = div %8, 2u
+    %10:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %v, %7, %9 @align(8)
+    %11:ptr<workgroup, u16, read_write> = access %v, 0u
+    %12:u16 = load %11
+    %13:f16 = bitcast<f16> %12
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_F32_Array_Vec3U_Access_F16) {
+    auto* arr_ty = ty.array(ty.vec3u(), 1024);
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.f16()},
+                                                  {mod.symbols.New("b"), arr_ty},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kRight, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(workgroup, arr_ty), v, 1_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor}, access, offset,
+                       stride);
+        access = b.Access(ty.ptr(workgroup, ty.f16()), v, 0_u);
+        b.Load(access);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:f16 @offset(0)
+  b:array<vec3<u32>, 1024> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:ptr<workgroup, array<vec3<u32>, 1024>, read_write> = access %v, 1u
+    %6:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %5, %offset, %stride
+    %7:ptr<workgroup, f16, read_write> = access %v, 0u
+    %8:f16 = load %7
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:f16 @offset(0)
+  b:array<vec3<u32>, 1024> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 8200>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 16u
+    %6:u32 = div %5, 2u
+    %7:u32 = add 8u, %6
+    %8:u32 = mul %stride, 16u
+    %9:u32 = div %8, 2u
+    %10:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %v, %7, %9 @align(16)
+    %11:ptr<workgroup, u16, read_write> = access %v, 0u
+    %12:u16 = load %11
+    %13:f16 = bitcast<f16> %12
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_SubgroupMatrix_F32_Array_Vec4U_Access_F16) {
+    auto* arr_ty = ty.array(ty.vec4u(), 1024);
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.f16()},
+                                                  {mod.symbols.New("b"), arr_ty},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kRight, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(workgroup, arr_ty), v, 1_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor}, access, offset,
+                       stride);
+        access = b.Access(ty.ptr(workgroup, ty.f16()), v, 0_u);
+        b.Load(access);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:f16 @offset(0)
+  b:array<vec4<u32>, 1024> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:ptr<workgroup, array<vec4<u32>, 1024>, read_write> = access %v, 1u
+    %6:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %5, %offset, %stride
+    %7:ptr<workgroup, f16, read_write> = access %v, 0u
+    %8:f16 = load %7
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:f16 @offset(0)
+  b:array<vec4<u32>, 1024> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 8200>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:u32 = mul %offset, 16u
+    %6:u32 = div %5, 2u
+    %7:u32 = add 8u, %6
+    %8:u32 = mul %stride, 16u
+    %9:u32 = div %8, 2u
+    %10:subgroup_matrix_right<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_right<f32, 8, 8>, row_major> %v, %7, %9 @align(16)
+    %11:ptr<workgroup, u16, read_write> = access %v, 0u
+    %12:u16 = load %11
+    %13:f16 = bitcast<f16> %12
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_UsedWithSubgroupMatrix_Load_SameType) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, ty.array(ty.f32(), 1024)));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* l = b.Let("l", v);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kColMajor}, l, offset,
+                       stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<f32, 1024>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %l:ptr<workgroup, array<f32, 1024>, read_write> = let %v
+    %6:subgroup_matrix_left<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f32, 8, 8>, col_major> %l, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    DecomposeAccessConfig options{.workgroup_subgroup_matrix = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(src, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_UsedWithSubgroupMatrix_Load_DifferentType) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.array(ty.f32(), 1024)},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.u8(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    foo->SetParams({offset, stride});
+    b.Append(foo->Block(), [&] {
+        auto* l = b.Let("l", v);
+        auto* a = b.Access(ty.ptr(workgroup, ty.array(ty.f32(), 1024)), l, 0_u);
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kColMajor}, a, offset,
+                       stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:array<f32, 1024> @offset(0)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %l:ptr<workgroup, S, read_write> = let %v
+    %6:ptr<workgroup, array<f32, 1024>, read_write> = access %l, 0u
+    %7:subgroup_matrix_left<u8, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u8, 8, 8>, col_major> %6, %offset, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:array<f32, 1024> @offset(0)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 1024>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32):void {
+  $B2: {
+    %5:subgroup_matrix_left<u8, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<u8, 8, 8>, col_major> %v, %offset, %stride
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup_subgroup_matrix = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_UsedWithSubgroupMatrix_Store_SameType) {
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, ty.array(ty.f32(), 1024)));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    foo->SetParams({offset, stride, m});
+    b.Append(foo->Block(), [&] {
+        auto* l = b.Let("l", v);
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, l, offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<workgroup, array<f32, 1024>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32, %m:subgroup_matrix_left<f32, 8, 8>):void {
+  $B2: {
+    %l:ptr<workgroup, array<f32, 1024>, read_write> = let %v
+    %7:void = subgroupMatrixStore<col_major> %l, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    DecomposeAccessConfig options{.workgroup_subgroup_matrix = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(src, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, Workgroup_UsedWithSubgroupMatrix_Store_DifferentType) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.array(ty.f32(), 1024)},
+                                              });
+    auto* mat_ty = ty.subgroup_matrix(core::SubgroupMatrixKind::kLeft, ty.u8(), 8, 8);
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* offset = b.FunctionParam("offset", ty.u32());
+    auto* stride = b.FunctionParam("stride", ty.u32());
+    auto* m = b.FunctionParam("m", mat_ty);
+    foo->SetParams({offset, stride, m});
+    b.Append(foo->Block(), [&] {
+        auto* l = b.Let("l", v);
+        auto* a = b.Access(ty.ptr(workgroup, ty.array(ty.f32(), 1024)), l, 0_u);
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kColMajor}, a, offset, m, stride);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:array<f32, 1024> @offset(0)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32, %m:subgroup_matrix_left<u8, 8, 8>):void {
+  $B2: {
+    %l:ptr<workgroup, S, read_write> = let %v
+    %7:ptr<workgroup, array<f32, 1024>, read_write> = access %l, 0u
+    %8:void = subgroupMatrixStore<col_major> %7, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:array<f32, 1024> @offset(0)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u32, 1024>, read_write> = var undef
+}
+
+%foo = func(%offset:u32, %stride:u32, %m:subgroup_matrix_left<u8, 8, 8>):void {
+  $B2: {
+    %6:void = subgroupMatrixStore<col_major> %v, %offset, %m, %stride
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup_subgroup_matrix = true};
+    Run(DecomposeAccess, options);
+    EXPECT_EQ(expect, str());
+}
+
+// Regression test: an immediate struct whose Size() is rounded up by member alignment (here a
+// vec4 forces 16-byte alignment, padding 24 bytes of content to 32) must be decomposed to an array
+// sized by minimum_array_size (the reserved push constant range), not by the padded Size(). Using
+// the padded Size() emitted a block larger than the reserved range and failed Vulkan push constant
+// validation (VUID-VkGraphicsPipelineCreateInfo-layout-10069).
+TEST_F(IR_DecomposeAccessTest, ImmediateAccessPaddedStructCappedByMinimumArraySize) {
+    auto* SB = ty.Struct(mod.symbols.New("SB"), {
+                                                    {mod.symbols.New("a"), ty.vec4<f32>()},
+                                                    {mod.symbols.New("b"), ty.f32()},
+                                                    {mod.symbols.New("c"), ty.f32()},
+                                                });
+
+    auto* var = b.Var("v", immediate, SB, core::Access::kRead);
+
+    b.ir.root_block->Append(var);
+    auto* func = b.Function("foo", ty.void_(), core::ir::Function::PipelineStage::kFragment);
+    b.Append(func->Block(), [&] {
+        b.Let("b", b.Load(b.Access(ty.ptr<immediate, f32, core::Access::kRead>(), var, 2_u)));
+        b.Return(func);
+    });
+
+    auto* expect = R"(
+SB = struct @align(16) {
+  a:vec4<f32> @offset(0)
+  b:f32 @offset(16)
+  c:f32 @offset(20)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 6>, read> = var undef
+}
+
+%foo = @fragment func():void {
+  $B2: {
+    %3:ptr<immediate, u32, read> = access %v, 5u
+    %4:u32 = load %3
+    %5:f32 = bitcast<f32> %4
+    %b:f32 = let %5
+    ret
+  }
+}
+)";
+
+    // SB has align 16 (from the vec4), so SB->Size() is roundUp(16, 24) = 32 -> 8 u32 elements.
+    // minimum_array_size is the reserved range of 24 bytes -> the array must be capped at 6.
+    DecomposeAccessConfig options{.immediate = true, .minimum_array_size = 24};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_Vector) {
+    auto* v = b.Var("v", immediate, ty.vec4u());
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx = b.FunctionParam("idx", ty.u32());
+    foo->SetParams({idx});
+    b.Append(foo->Block(), [&] {
+        auto* load = b.LoadVectorElement(v, idx);
+        b.Let("value", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<immediate, vec4<u32>, read> = var undef
+}
+
+%foo = func(%idx:u32):void {
+  $B2: {
+    %4:u32 = load_vector_element %v, %idx
+    %value:u32 = let %4
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 4>, read> = var undef
+}
+
+%foo = func(%idx:u32):void {
+  $B2: {
+    %4:ptr<immediate, u32, read> = access %v, 0u
+    %5:u32 = load %4 @align(16)
+    %6:ptr<immediate, u32, read> = access %v, 1u
+    %7:u32 = load %6
+    %8:ptr<immediate, u32, read> = access %v, 2u
+    %9:u32 = load %8
+    %10:ptr<immediate, u32, read> = access %v, 3u
+    %11:u32 = load %10
+    %12:vec4<u32> = construct %5, %7, %9, %11
+    %13:u32 = access %12, %idx
+    %value:u32 = let %13
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_Matrix) {
+    auto* v = b.Var("v", immediate, ty.mat2x2(ty.f32()));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx = b.FunctionParam("idx", ty.u32());
+    foo->SetParams({idx});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(immediate, ty.vec2(ty.f32())), v, idx);
+        auto* load = b.Load(access);
+        b.Let("value", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<immediate, mat2x2<f32>, read> = var undef
+}
+
+%foo = func(%idx:u32):void {
+  $B2: {
+    %4:ptr<immediate, vec2<f32>, read> = access %v, %idx
+    %5:vec2<f32> = load %4
+    %value:vec2<f32> = let %5
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 4>, read> = var undef
+}
+
+%foo = func(%idx:u32):void {
+  $B2: {
+    %4:mat2x2<f32> = call %5, 0u
+    %6:vec2<f32> = access %4, %idx
+    %value:vec2<f32> = let %6
+    ret
+  }
+}
+%5 = func(%start_byte_offset:u32):mat2x2<f32> {
+  $B3: {
+    %9:u32 = div %start_byte_offset, 4u
+    %10:ptr<immediate, u32, read> = access %v, %9
+    %11:u32 = load %10 @align(8)
+    %12:u32 = add %9, 1u
+    %13:ptr<immediate, u32, read> = access %v, %12
+    %14:u32 = load %13
+    %15:vec2<u32> = construct %11, %14
+    %16:vec2<f32> = bitcast<vec2<f32>> %15
+    %17:u32 = add 8u, %start_byte_offset
+    %18:u32 = div %17, 4u
+    %19:ptr<immediate, u32, read> = access %v, %18
+    %20:u32 = load %19 @align(8)
+    %21:u32 = add %18, 1u
+    %22:ptr<immediate, u32, read> = access %v, %21
+    %23:u32 = load %22
+    %24:vec2<u32> = construct %20, %23
+    %25:vec2<f32> = bitcast<vec2<f32>> %24
+    %26:mat2x2<f32> = construct %16, %25
+    ret %26
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_MatrixAndVector) {
+    auto* v = b.Var("v", immediate, ty.mat2x2(ty.f32()));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx1 = b.FunctionParam("idx1", ty.u32());
+    auto* idx2 = b.FunctionParam("idx2", ty.u32());
+    foo->SetParams({idx1, idx2});
+    b.Append(foo->Block(), [&] {
+        auto* access = b.Access(ty.ptr(immediate, ty.vec2(ty.f32())), v, idx1);
+        auto* load = b.LoadVectorElement(access, idx2);
+        b.Let("value", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+$B1: {  # root
+  %v:ptr<immediate, mat2x2<f32>, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %5:ptr<immediate, vec2<f32>, read> = access %v, %idx1
+    %6:f32 = load_vector_element %5, %idx2
+    %value:f32 = let %6
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 4>, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %5:mat2x2<f32> = call %6, 0u
+    %7:vec2<f32> = access %5, %idx1
+    %8:f32 = access %7, %idx2
+    %value:f32 = let %8
+    ret
+  }
+}
+%6 = func(%start_byte_offset:u32):mat2x2<f32> {
+  $B3: {
+    %11:u32 = div %start_byte_offset, 4u
+    %12:ptr<immediate, u32, read> = access %v, %11
+    %13:u32 = load %12 @align(8)
+    %14:u32 = add %11, 1u
+    %15:ptr<immediate, u32, read> = access %v, %14
+    %16:u32 = load %15
+    %17:vec2<u32> = construct %13, %16
+    %18:vec2<f32> = bitcast<vec2<f32>> %17
+    %19:u32 = add 8u, %start_byte_offset
+    %20:u32 = div %19, 4u
+    %21:ptr<immediate, u32, read> = access %v, %20
+    %22:u32 = load %21 @align(8)
+    %23:u32 = add %20, 1u
+    %24:ptr<immediate, u32, read> = access %v, %23
+    %25:u32 = load %24
+    %26:vec2<u32> = construct %22, %25
+    %27:vec2<f32> = bitcast<vec2<f32>> %26
+    %28:mat2x2<f32> = construct %18, %27
+    ret %28
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_StructMatrix) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.mat2x2(ty.f32())},
+                                              });
+    auto* v = b.Var("v", immediate, S);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx1 = b.FunctionParam("idx1", ty.u32());
+    auto* idx2 = b.FunctionParam("idx2", ty.u32());
+    foo->SetParams({idx1, idx2});
+    b.Append(foo->Block(), [&] {
+        auto* l1 = b.Let("l1", v);
+        auto* access = b.Access(ty.ptr(immediate, ty.vec2(ty.f32())), l1, 1_u, idx1);
+        auto* l2 = b.Let("l2", access);
+        auto* load = b.Load(l2);
+        b.Let("value", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, S, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %l1:ptr<immediate, S, read> = let %v
+    %6:ptr<immediate, vec2<f32>, read> = access %l1, 1u, %idx1
+    %l2:ptr<immediate, vec2<f32>, read> = let %6
+    %8:vec2<f32> = load %l2
+    %value:vec2<f32> = let %8
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 8>, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %5:mat2x2<f32> = call %6, 16u
+    %7:vec2<f32> = access %5, %idx1
+    %l2:vec2<f32> = let %7
+    %value:vec2<f32> = let %l2
+    ret
+  }
+}
+%6 = func(%start_byte_offset:u32):mat2x2<f32> {
+  $B3: {
+    %11:u32 = div %start_byte_offset, 4u
+    %12:ptr<immediate, u32, read> = access %v, %11
+    %13:u32 = load %12 @align(8)
+    %14:u32 = add %11, 1u
+    %15:ptr<immediate, u32, read> = access %v, %14
+    %16:u32 = load %15
+    %17:vec2<u32> = construct %13, %16
+    %18:vec2<f32> = bitcast<vec2<f32>> %17
+    %19:u32 = add 8u, %start_byte_offset
+    %20:u32 = div %19, 4u
+    %21:ptr<immediate, u32, read> = access %v, %20
+    %22:u32 = load %21 @align(8)
+    %23:u32 = add %20, 1u
+    %24:ptr<immediate, u32, read> = access %v, %23
+    %25:u32 = load %24
+    %26:vec2<u32> = construct %22, %25
+    %27:vec2<f32> = bitcast<vec2<f32>> %26
+    %28:mat2x2<f32> = construct %18, %27
+    ret %28
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_StructMatrixVector) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.mat2x2(ty.f32())},
+                                              });
+    auto* v = b.Var("v", immediate, S);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx1 = b.FunctionParam("idx1", ty.u32());
+    auto* idx2 = b.FunctionParam("idx2", ty.u32());
+    foo->SetParams({idx1, idx2});
+    b.Append(foo->Block(), [&] {
+        auto* l1 = b.Let("l1", v);
+        auto* access = b.Access(ty.ptr(immediate, ty.vec2(ty.f32())), l1, 1_u, idx1);
+        auto* l2 = b.Let("l2", access);
+        auto* load = b.LoadVectorElement(l2, idx2);
+        b.Let("value", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, S, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %l1:ptr<immediate, S, read> = let %v
+    %6:ptr<immediate, vec2<f32>, read> = access %l1, 1u, %idx1
+    %l2:ptr<immediate, vec2<f32>, read> = let %6
+    %8:f32 = load_vector_element %l2, %idx2
+    %value:f32 = let %8
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 8>, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %5:mat2x2<f32> = call %6, 16u
+    %7:vec2<f32> = access %5, %idx1
+    %l2:vec2<f32> = let %7
+    %9:f32 = access %l2, %idx2
+    %value:f32 = let %9
+    ret
+  }
+}
+%6 = func(%start_byte_offset:u32):mat2x2<f32> {
+  $B3: {
+    %12:u32 = div %start_byte_offset, 4u
+    %13:ptr<immediate, u32, read> = access %v, %12
+    %14:u32 = load %13 @align(8)
+    %15:u32 = add %12, 1u
+    %16:ptr<immediate, u32, read> = access %v, %15
+    %17:u32 = load %16
+    %18:vec2<u32> = construct %14, %17
+    %19:vec2<f32> = bitcast<vec2<f32>> %18
+    %20:u32 = add 8u, %start_byte_offset
+    %21:u32 = div %20, 4u
+    %22:ptr<immediate, u32, read> = access %v, %21
+    %23:u32 = load %22 @align(8)
+    %24:u32 = add %21, 1u
+    %25:ptr<immediate, u32, read> = access %v, %24
+    %26:u32 = load %25
+    %27:vec2<u32> = construct %23, %26
+    %28:vec2<f32> = bitcast<vec2<f32>> %27
+    %29:mat2x2<f32> = construct %19, %28
+    ret %29
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, ImmediateNoDynamicIndices_StructMatrix_MultiUse) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.mat2x2(ty.f32())},
+                                              });
+    auto* v = b.Var("v", immediate, S);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    auto* idx1 = b.FunctionParam("idx1", ty.u32());
+    auto* idx2 = b.FunctionParam("idx2", ty.u32());
+    foo->SetParams({idx1, idx2});
+    b.Append(foo->Block(), [&] {
+        auto* l1 = b.Let("l1", v);
+        auto* access = b.Access(ty.ptr(immediate, ty.vec2(ty.f32())), l1, 1_u, idx1);
+        auto* l2 = b.Let("l2", access);
+        auto* load = b.LoadVectorElement(l2, idx2);
+        b.Let("value1", load);
+        load = b.LoadVectorElement(l2, idx2);
+        b.Let("value2", load);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, S, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %l1:ptr<immediate, S, read> = let %v
+    %6:ptr<immediate, vec2<f32>, read> = access %l1, 1u, %idx1
+    %l2:ptr<immediate, vec2<f32>, read> = let %6
+    %8:f32 = load_vector_element %l2, %idx2
+    %value1:f32 = let %8
+    %10:f32 = load_vector_element %l2, %idx2
+    %value2:f32 = let %10
+    ret
+  }
+}
+)";
+
+    EXPECT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:mat2x2<f32> @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<immediate, array<u32, 8>, read> = var undef
+}
+
+%foo = func(%idx1:u32, %idx2:u32):void {
+  $B2: {
+    %5:mat2x2<f32> = call %6, 16u
+    %7:vec2<f32> = access %5, %idx1
+    %l2:vec2<f32> = let %7
+    %9:f32 = access %l2, %idx2
+    %value1:f32 = let %9
+    %11:f32 = access %l2, %idx2
+    %value2:f32 = let %11
+    ret
+  }
+}
+%6 = func(%start_byte_offset:u32):mat2x2<f32> {
+  $B3: {
+    %14:u32 = div %start_byte_offset, 4u
+    %15:ptr<immediate, u32, read> = access %v, %14
+    %16:u32 = load %15 @align(8)
+    %17:u32 = add %14, 1u
+    %18:ptr<immediate, u32, read> = access %v, %17
+    %19:u32 = load %18
+    %20:vec2<u32> = construct %16, %19
+    %21:vec2<f32> = bitcast<vec2<f32>> %20
+    %22:u32 = add 8u, %start_byte_offset
+    %23:u32 = div %22, 4u
+    %24:ptr<immediate, u32, read> = access %v, %23
+    %25:u32 = load %24 @align(8)
+    %26:u32 = add %23, 1u
+    %27:ptr<immediate, u32, read> = access %v, %26
+    %28:u32 = load %27
+    %29:vec2<u32> = construct %25, %28
+    %30:vec2<f32> = bitcast<vec2<f32>> %29
+    %31:mat2x2<f32> = construct %21, %30
+    ret %31
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.immediate = true, .allow_dynamic_immediate_indices = false};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_Struct_Load) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                                  {mod.symbols.New("c"), ty.vec4f()},
+                                              });
+
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Load(v);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+  c:vec4<f32> @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:S = load %v
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+  c:vec4<f32> @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16, 24>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:S = call %4, 0u
+    ret
+  }
+}
+%4 = func(%start_byte_offset:u32):S {
+  $B3: {
+    %6:u32 = div %start_byte_offset, 2u
+    %7:ptr<storage, u16, read_write> = access %v, %6
+    %8:u16 = load %7 @align(16)
+    %9:u32 = add %6, 1u
+    %10:ptr<storage, u16, read_write> = access %v, %9
+    %11:u16 = load %10
+    %12:u32 = add %9, 1u
+    %13:ptr<storage, u16, read_write> = access %v, %12
+    %14:u16 = load %13
+    %15:u32 = add %12, 1u
+    %16:ptr<storage, u16, read_write> = access %v, %15
+    %17:u16 = load %16
+    %18:u32 = add %15, 1u
+    %19:ptr<storage, u16, read_write> = access %v, %18
+    %20:u16 = load %19
+    %21:u32 = add %18, 1u
+    %22:ptr<storage, u16, read_write> = access %v, %21
+    %23:u16 = load %22
+    %24:u32 = add %21, 1u
+    %25:ptr<storage, u16, read_write> = access %v, %24
+    %26:u16 = load %25
+    %27:u32 = add %24, 1u
+    %28:ptr<storage, u16, read_write> = access %v, %27
+    %29:u16 = load %28
+    %30:vec2<u16> = construct %8, %11
+    %31:u32 = bitcast<u32> %30
+    %32:vec2<u16> = construct %14, %17
+    %33:u32 = bitcast<u32> %32
+    %34:vec2<u16> = construct %20, %23
+    %35:u32 = bitcast<u32> %34
+    %36:vec2<u16> = construct %26, %29
+    %37:u32 = bitcast<u32> %36
+    %38:vec4<u32> = construct %31, %33, %35, %37
+    %39:u32 = add 16u, %start_byte_offset
+    %40:u32 = div %39, 2u
+    %41:ptr<storage, u16, read_write> = access %v, %40
+    %42:u16 = load %41
+    %43:f16 = bitcast<f16> %42
+    %44:u32 = add 32u, %start_byte_offset
+    %45:u32 = div %44, 2u
+    %46:ptr<storage, u16, read_write> = access %v, %45
+    %47:u16 = load %46 @align(16)
+    %48:u32 = add %45, 1u
+    %49:ptr<storage, u16, read_write> = access %v, %48
+    %50:u16 = load %49
+    %51:u32 = add %48, 1u
+    %52:ptr<storage, u16, read_write> = access %v, %51
+    %53:u16 = load %52
+    %54:u32 = add %51, 1u
+    %55:ptr<storage, u16, read_write> = access %v, %54
+    %56:u16 = load %55
+    %57:u32 = add %54, 1u
+    %58:ptr<storage, u16, read_write> = access %v, %57
+    %59:u16 = load %58
+    %60:u32 = add %57, 1u
+    %61:ptr<storage, u16, read_write> = access %v, %60
+    %62:u16 = load %61
+    %63:u32 = add %60, 1u
+    %64:ptr<storage, u16, read_write> = access %v, %63
+    %65:u16 = load %64
+    %66:u32 = add %63, 1u
+    %67:ptr<storage, u16, read_write> = access %v, %66
+    %68:u16 = load %67
+    %69:vec2<u16> = construct %47, %50
+    %70:u32 = bitcast<u32> %69
+    %71:vec2<u16> = construct %53, %56
+    %72:u32 = bitcast<u32> %71
+    %73:vec2<u16> = construct %59, %62
+    %74:u32 = bitcast<u32> %73
+    %75:vec2<u16> = construct %65, %68
+    %76:u32 = bitcast<u32> %75
+    %77:vec4<u32> = construct %70, %72, %74, %76
+    %78:vec4<f32> = bitcast<vec4<f32>> %77
+    %79:S = construct %38, %43, %78
+    ret %79
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_Struct_Store) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                                  {mod.symbols.New("c"), ty.vec4f()},
+                                              });
+
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Store(v, b.Zero(S));
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+  c:vec4<f32> @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    store %v, S(vec4<u32>(0u), 0.0h, vec4<f32>(0.0f))
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+  c:vec4<f32> @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16, 24>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:void = call %4, 0u, S(vec4<u32>(0u), 0.0h, vec4<f32>(0.0f))
+    ret
+  }
+}
+%4 = func(%start_byte_offset:u32, %object:S):void {
+  $B3: {
+    %7:vec4<u32> = access %object, 0u
+    %8:u32 = div %start_byte_offset, 2u
+    %9:u32 = access %7, 0u
+    %10:vec2<u16> = bitcast<vec2<u16>> %9
+    %11:u16 = access %10, 0u
+    %12:ptr<storage, u16, read_write> = access %v, %8
+    store %12, %11 @align(16)
+    %13:u32 = add %8, 1u
+    %14:u32 = access %7, 0u
+    %15:vec2<u16> = bitcast<vec2<u16>> %14
+    %16:u16 = access %15, 1u
+    %17:ptr<storage, u16, read_write> = access %v, %13
+    store %17, %16
+    %18:u32 = add %13, 1u
+    %19:u32 = access %7, 1u
+    %20:vec2<u16> = bitcast<vec2<u16>> %19
+    %21:u16 = access %20, 0u
+    %22:ptr<storage, u16, read_write> = access %v, %18
+    store %22, %21
+    %23:u32 = add %18, 1u
+    %24:u32 = access %7, 1u
+    %25:vec2<u16> = bitcast<vec2<u16>> %24
+    %26:u16 = access %25, 1u
+    %27:ptr<storage, u16, read_write> = access %v, %23
+    store %27, %26
+    %28:u32 = add %23, 1u
+    %29:u32 = access %7, 2u
+    %30:vec2<u16> = bitcast<vec2<u16>> %29
+    %31:u16 = access %30, 0u
+    %32:ptr<storage, u16, read_write> = access %v, %28
+    store %32, %31
+    %33:u32 = add %28, 1u
+    %34:u32 = access %7, 2u
+    %35:vec2<u16> = bitcast<vec2<u16>> %34
+    %36:u16 = access %35, 1u
+    %37:ptr<storage, u16, read_write> = access %v, %33
+    store %37, %36
+    %38:u32 = add %33, 1u
+    %39:u32 = access %7, 3u
+    %40:vec2<u16> = bitcast<vec2<u16>> %39
+    %41:u16 = access %40, 0u
+    %42:ptr<storage, u16, read_write> = access %v, %38
+    store %42, %41
+    %43:u32 = add %38, 1u
+    %44:u32 = access %7, 3u
+    %45:vec2<u16> = bitcast<vec2<u16>> %44
+    %46:u16 = access %45, 1u
+    %47:ptr<storage, u16, read_write> = access %v, %43
+    store %47, %46
+    %48:u32 = add 16u, %start_byte_offset
+    %49:f16 = access %object, 1u
+    %50:u32 = div %48, 2u
+    %51:u16 = bitcast<u16> %49
+    %52:ptr<storage, u16, read_write> = access %v, %50
+    store %52, %51
+    %53:u32 = add 32u, %start_byte_offset
+    %54:vec4<f32> = access %object, 2u
+    %55:u32 = div %53, 2u
+    %56:f32 = access %54, 0u
+    %57:vec2<u16> = bitcast<vec2<u16>> %56
+    %58:u16 = access %57, 0u
+    %59:ptr<storage, u16, read_write> = access %v, %55
+    store %59, %58 @align(16)
+    %60:u32 = add %55, 1u
+    %61:f32 = access %54, 0u
+    %62:vec2<u16> = bitcast<vec2<u16>> %61
+    %63:u16 = access %62, 1u
+    %64:ptr<storage, u16, read_write> = access %v, %60
+    store %64, %63
+    %65:u32 = add %60, 1u
+    %66:f32 = access %54, 1u
+    %67:vec2<u16> = bitcast<vec2<u16>> %66
+    %68:u16 = access %67, 0u
+    %69:ptr<storage, u16, read_write> = access %v, %65
+    store %69, %68
+    %70:u32 = add %65, 1u
+    %71:f32 = access %54, 1u
+    %72:vec2<u16> = bitcast<vec2<u16>> %71
+    %73:u16 = access %72, 1u
+    %74:ptr<storage, u16, read_write> = access %v, %70
+    store %74, %73
+    %75:u32 = add %70, 1u
+    %76:f32 = access %54, 2u
+    %77:vec2<u16> = bitcast<vec2<u16>> %76
+    %78:u16 = access %77, 0u
+    %79:ptr<storage, u16, read_write> = access %v, %75
+    store %79, %78
+    %80:u32 = add %75, 1u
+    %81:f32 = access %54, 2u
+    %82:vec2<u16> = bitcast<vec2<u16>> %81
+    %83:u16 = access %82, 1u
+    %84:ptr<storage, u16, read_write> = access %v, %80
+    store %84, %83
+    %85:u32 = add %80, 1u
+    %86:f32 = access %54, 3u
+    %87:vec2<u16> = bitcast<vec2<u16>> %86
+    %88:u16 = access %87, 0u
+    %89:ptr<storage, u16, read_write> = access %v, %85
+    store %89, %88
+    %90:u32 = add %85, 1u
+    %91:f32 = access %54, 3u
+    %92:vec2<u16> = bitcast<vec2<u16>> %91
+    %93:u16 = access %92, 1u
+    %94:ptr<storage, u16, read_write> = access %v, %90
+    store %94, %93
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_Array_Load) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.array(ty.vec4u(), 2)},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                              });
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Load(b.Access(ty.ptr(storage, ty.array(ty.vec4u(), 2)), v, 0_u));
+        b.Load(b.Access(ty.ptr(storage, ty.f16()), v, 1_u));
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:array<vec4<u32>, 2> @offset(0)
+  b:f16 @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<vec4<u32>, 2>, read_write> = access %v, 0u
+    %4:array<vec4<u32>, 2> = load %3
+    %5:ptr<storage, f16, read_write> = access %v, 1u
+    %6:f16 = load %5
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:array<vec4<u32>, 2> @offset(0)
+  b:f16 @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16, 24>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:array<vec4<u32>, 2> = call %4, 0u
+    %5:ptr<storage, u16, read_write> = access %v, 16u
+    %6:u16 = load %5
+    %7:f16 = bitcast<f16> %6
+    ret
+  }
+}
+%4 = func(%start_byte_offset:u32):array<vec4<u32>, 2> {
+  $B3: {
+    %a:ptr<function, array<vec4<u32>, 2>, read_write> = var array<vec4<u32>, 2>(vec4<u32>(0u))
+    loop [i: $B4, b: $B5, c: $B6] {  # loop_1
+      $B4: {  # initializer
+        next_iteration 0u  # -> $B5
+      }
+      $B5 (%idx:u32): {  # body
+        %11:bool = gte %idx, 2u
+        if %11 [t: $B7] {  # if_1
+          $B7: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %12:u32 = mul %idx, 16u
+        %13:u32 = add %start_byte_offset, %12
+        %14:ptr<function, vec4<u32>, read_write> = access %a, %idx
+        %15:u32 = div %13, 2u
+        %16:ptr<storage, u16, read_write> = access %v, %15
+        %17:u16 = load %16 @align(16)
+        %18:u32 = add %15, 1u
+        %19:ptr<storage, u16, read_write> = access %v, %18
+        %20:u16 = load %19
+        %21:u32 = add %18, 1u
+        %22:ptr<storage, u16, read_write> = access %v, %21
+        %23:u16 = load %22
+        %24:u32 = add %21, 1u
+        %25:ptr<storage, u16, read_write> = access %v, %24
+        %26:u16 = load %25
+        %27:u32 = add %24, 1u
+        %28:ptr<storage, u16, read_write> = access %v, %27
+        %29:u16 = load %28
+        %30:u32 = add %27, 1u
+        %31:ptr<storage, u16, read_write> = access %v, %30
+        %32:u16 = load %31
+        %33:u32 = add %30, 1u
+        %34:ptr<storage, u16, read_write> = access %v, %33
+        %35:u16 = load %34
+        %36:u32 = add %33, 1u
+        %37:ptr<storage, u16, read_write> = access %v, %36
+        %38:u16 = load %37
+        %39:vec2<u16> = construct %17, %20
+        %40:u32 = bitcast<u32> %39
+        %41:vec2<u16> = construct %23, %26
+        %42:u32 = bitcast<u32> %41
+        %43:vec2<u16> = construct %29, %32
+        %44:u32 = bitcast<u32> %43
+        %45:vec2<u16> = construct %35, %38
+        %46:u32 = bitcast<u32> %45
+        %47:vec4<u32> = construct %40, %42, %44, %46
+        store %14, %47
+        continue  # -> $B6
+      }
+      $B6: {  # continuing
+        %48:u32 = add %idx, 1u
+        next_iteration %48  # -> $B5
+      }
+    }
+    %49:array<vec4<u32>, 2> = load %a
+    ret %49
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_Array_Store) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.array(ty.vec4u(), 2)},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                              });
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Store(b.Access(ty.ptr(storage, ty.array(ty.vec4u(), 2)), v, 0_u),
+                b.Zero(ty.array(ty.vec4u(), 2)));
+        b.Load(b.Access(ty.ptr(storage, ty.f16()), v, 1_u));
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:array<vec4<u32>, 2> @offset(0)
+  b:f16 @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, array<vec4<u32>, 2>, read_write> = access %v, 0u
+    store %3, array<vec4<u32>, 2>(vec4<u32>(0u))
+    %4:ptr<storage, f16, read_write> = access %v, 1u
+    %5:f16 = load %4
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:array<vec4<u32>, 2> @offset(0)
+  b:f16 @offset(32)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16, 24>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:void = call %4, 0u, array<vec4<u32>, 2>(vec4<u32>(0u))
+    %5:ptr<storage, u16, read_write> = access %v, 16u
+    %6:u16 = load %5
+    %7:f16 = bitcast<f16> %6
+    ret
+  }
+}
+%4 = func(%start_byte_offset:u32, %object:array<vec4<u32>, 2>):void {
+  $B3: {
+    loop [i: $B4, b: $B5, c: $B6] {  # loop_1
+      $B4: {  # initializer
+        next_iteration 0u  # -> $B5
+      }
+      $B5 (%idx:u32): {  # body
+        %11:bool = gte %idx, 2u
+        if %11 [t: $B7] {  # if_1
+          $B7: {  # true
+            exit_loop  # loop_1
+          }
+        }
+        %12:u32 = mul %idx, 16u
+        %13:u32 = add %start_byte_offset, %12
+        %14:vec4<u32> = access %object, %idx
+        %15:u32 = div %13, 2u
+        %16:u32 = access %14, 0u
+        %17:vec2<u16> = bitcast<vec2<u16>> %16
+        %18:u16 = access %17, 0u
+        %19:ptr<storage, u16, read_write> = access %v, %15
+        store %19, %18 @align(16)
+        %20:u32 = add %15, 1u
+        %21:u32 = access %14, 0u
+        %22:vec2<u16> = bitcast<vec2<u16>> %21
+        %23:u16 = access %22, 1u
+        %24:ptr<storage, u16, read_write> = access %v, %20
+        store %24, %23
+        %25:u32 = add %20, 1u
+        %26:u32 = access %14, 1u
+        %27:vec2<u16> = bitcast<vec2<u16>> %26
+        %28:u16 = access %27, 0u
+        %29:ptr<storage, u16, read_write> = access %v, %25
+        store %29, %28
+        %30:u32 = add %25, 1u
+        %31:u32 = access %14, 1u
+        %32:vec2<u16> = bitcast<vec2<u16>> %31
+        %33:u16 = access %32, 1u
+        %34:ptr<storage, u16, read_write> = access %v, %30
+        store %34, %33
+        %35:u32 = add %30, 1u
+        %36:u32 = access %14, 2u
+        %37:vec2<u16> = bitcast<vec2<u16>> %36
+        %38:u16 = access %37, 0u
+        %39:ptr<storage, u16, read_write> = access %v, %35
+        store %39, %38
+        %40:u32 = add %35, 1u
+        %41:u32 = access %14, 2u
+        %42:vec2<u16> = bitcast<vec2<u16>> %41
+        %43:u16 = access %42, 1u
+        %44:ptr<storage, u16, read_write> = access %v, %40
+        store %44, %43
+        %45:u32 = add %40, 1u
+        %46:u32 = access %14, 3u
+        %47:vec2<u16> = bitcast<vec2<u16>> %46
+        %48:u16 = access %47, 0u
+        %49:ptr<storage, u16, read_write> = access %v, %45
+        store %49, %48
+        %50:u32 = add %45, 1u
+        %51:u32 = access %14, 3u
+        %52:vec2<u16> = bitcast<vec2<u16>> %51
+        %53:u16 = access %52, 1u
+        %54:ptr<storage, u16, read_write> = access %v, %50
+        store %54, %53
+        continue  # -> $B6
+      }
+      $B6: {  # continuing
+        %55:u32 = add %idx, 1u
+        next_iteration %55  # -> $B5
+      }
+    }
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_U32_LoadVectorElement) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                              });
+
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.LoadVectorElement(b.Access(ty.ptr(storage, ty.vec4u()), v, 0_u), 1_u);
+        b.Load(b.Access(ty.ptr(storage, ty.f16()), v, 1_u));
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, vec4<u32>, read_write> = access %v, 0u
+    %4:u32 = load_vector_element %3, 1u
+    %5:ptr<storage, f16, read_write> = access %v, 1u
+    %6:f16 = load %5
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16, 16>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, u16, read_write> = access %v, 2u
+    %4:u16 = load %3 @align(4)
+    %5:ptr<storage, u16, read_write> = access %v, 3u
+    %6:u16 = load %5
+    %7:vec2<u16> = construct %4, %6
+    %8:u32 = bitcast<u32> %7
+    %9:ptr<storage, u16, read_write> = access %v, 8u
+    %10:u16 = load %9
+    %11:f16 = bitcast<f16> %10
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_U32_StoreVectorElement) {
+    auto* S = ty.Struct(mod.symbols.New("S"), {
+                                                  {mod.symbols.New("a"), ty.vec4u()},
+                                                  {mod.symbols.New("b"), ty.f16()},
+                                              });
+
+    auto* v = b.Var("v", ty.ptr(workgroup, S));
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.StoreVectorElement(b.Access(ty.ptr(workgroup, ty.vec4u()), v, 0_u), 1_u, u32(0));
+        b.Load(b.Access(ty.ptr(workgroup, ty.f16()), v, 1_u));
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, S, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<workgroup, vec4<u32>, read_write> = access %v, 0u
+    store_vector_element %3, 1u, 0u
+    %4:ptr<workgroup, f16, read_write> = access %v, 1u
+    %5:f16 = load %4
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(16) {
+  a:vec4<u32> @offset(0)
+  b:f16 @offset(16)
+}
+
+$B1: {  # root
+  %v:ptr<workgroup, array<u16, 16>, read_write> = var undef
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<workgroup, u16, read_write> = access %v, 2u
+    store %3, 0u16 @align(4)
+    %4:ptr<workgroup, u16, read_write> = access %v, 3u
+    store %4, 0u16
+    %5:ptr<workgroup, u16, read_write> = access %v, 8u
+    %6:u16 = load %5
+    %7:f16 = bitcast<f16> %6
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.workgroup = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_SubgroupMatrixLoad) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+    auto* S =
+        ty.Struct(mod.symbols.New("S"), {
+                                            {mod.symbols.New("a"), ty.f16()},
+                                            {mod.symbols.New("b"), ty.runtime_array(ty.f32())},
+                                        });
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Load(b.Access(ty.ptr(storage, ty.f16()), v, 0_u));
+        b.CallExplicit(mat_ty, BuiltinFn::kSubgroupMatrixLoad,
+                       Vector<TemplateParameter, 2>{mat_ty, Majorness::kRowMajor},
+                       b.Access(ty.ptr(storage, ty.runtime_array(ty.f32())), v, 1_u), 0_u, 8_u);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<f32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, f16, read_write> = access %v, 0u
+    %4:f16 = load %3
+    %5:ptr<storage, array<f32>, read_write> = access %v, 1u
+    %6:subgroup_matrix_left<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f32, 8, 8>, row_major> %5, 0u, 8u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<f32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, u16, read_write> = access %v, 0u
+    %4:u16 = load %3
+    %5:f16 = bitcast<f16> %4
+    %6:subgroup_matrix_left<f32, 8, 8> = subgroupMatrixLoad<subgroup_matrix_left<f32, 8, 8>, row_major> %v, 2u, 16u @align(4)
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
+TEST_F(IR_DecomposeAccessTest, AddAlignment_SubgroupMatrixStore) {
+    auto* mat_ty = ty.subgroup_matrix(SubgroupMatrixKind::kLeft, ty.f32(), 8, 8);
+    auto* S =
+        ty.Struct(mod.symbols.New("S"), {
+                                            {mod.symbols.New("a"), ty.f16()},
+                                            {mod.symbols.New("b"), ty.runtime_array(ty.f32())},
+                                        });
+    auto* v = b.Var("v", ty.ptr(storage, S));
+    v->SetBindingPoint(0, 0);
+    mod.root_block->Append(v);
+
+    auto* foo = b.Function("foo", ty.void_());
+    b.Append(foo->Block(), [&] {
+        b.Load(b.Access(ty.ptr(storage, ty.f16()), v, 0_u));
+        auto* m = b.Construct(mat_ty);
+        b.CallExplicit(ty.void_(), BuiltinFn::kSubgroupMatrixStore,
+                       Vector<TemplateParameter, 1>{Majorness::kRowMajor},
+                       b.Access(ty.ptr(storage, ty.runtime_array(ty.f32())), v, 1_u), 0_u, m, 8_u);
+        b.Return(foo);
+    });
+
+    auto* src = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<f32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<storage, S, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, f16, read_write> = access %v, 0u
+    %4:f16 = load %3
+    %5:subgroup_matrix_left<f32, 8, 8> = construct
+    %6:ptr<storage, array<f32>, read_write> = access %v, 1u
+    %7:void = subgroupMatrixStore<row_major> %6, 0u, %5, 8u
+    ret
+  }
+}
+)";
+
+    ASSERT_EQ(src, str());
+
+    auto* expect = R"(
+S = struct @align(4) {
+  a:f16 @offset(0)
+  b:array<f32> @offset(4)
+}
+
+$B1: {  # root
+  %v:ptr<storage, array<u16>, read_write> = var undef @binding_point(0, 0)
+}
+
+%foo = func():void {
+  $B2: {
+    %3:ptr<storage, u16, read_write> = access %v, 0u
+    %4:u16 = load %3
+    %5:f16 = bitcast<f16> %4
+    %6:subgroup_matrix_left<f32, 8, 8> = construct
+    %7:void = subgroupMatrixStore<row_major> %v, 2u, %6, 16u @align(4)
+    ret
+  }
+}
+)";
+
+    DecomposeAccessConfig options{.storage = true};
+    Run(DecomposeAccess, options);
+
+    EXPECT_EQ(expect, str());
+}
+
 }  // namespace
+
 }  // namespace tint::core::ir::transform

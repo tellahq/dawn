@@ -30,11 +30,11 @@
 
 #include <array>
 
-#include "dawn/common/Algebra.h"
-#include "dawn/native/Error.h"
-#include "dawn/native/Forward.h"
-#include "dawn/native/ObjectBase.h"
-#include "dawn/native/Subresource.h"
+#include "src/dawn/common/Algebra.h"
+#include "src/dawn/native/Error.h"
+#include "src/dawn/native/Forward.h"
+#include "src/dawn/native/ObjectBase.h"
+#include "src/dawn/native/Subresource.h"
 
 namespace dawn::native {
 
@@ -47,15 +47,21 @@ enum class TransferFunctionMode : uint32_t {
     PQ = 2,
 };
 struct TransferFunctionParams {
-    TransferFunctionMode mode;
-    float a, b, c, d, e, f, g;
+    TransferFunctionMode mode = TransferFunctionMode::Gamma;
+    float a = 0.0f;
+    float b = 0.0f;
+    float c = 0.0f;
+    float d = 0.0f;
+    float e = 0.0f;
+    float f = 0.0f;
+    float g = 0.0f;
 };
 
 // Matches the structure defined in Tint's multiplanar_external_texture.cc transform.
 struct ExternalTextureParams {
-    uint32_t numPlanes;
+    uint32_t numPlanes = 0;
     // TODO(crbug.com/dawn/1466): Only go as few steps as necessary.
-    uint32_t doYuvToRgbConversionOnly;
+    uint32_t doYuvToRgbConversionOnly = 0;
     // Multiplied with the vector on the left (Mat4x3 would use 16 more bytes).
     math::Mat3x4f yuvToRgbConversionMatrix;
     TransferFunctionParams srcTransferFunction;
@@ -72,10 +78,11 @@ struct ExternalTextureParams {
     // textureLoad() passes coords in plane0 related size.
     // Use this Factor to calculate plane1 load coord.
     math::Vec2f plane1CoordFactor;
+    math::Vec4f ootfParam;
 };
 
-MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
-                                             const ExternalTextureDescriptor* descriptor);
+MaybeValError ValidateExternalTextureDescriptor(const DeviceBase* device,
+                                                const ExternalTextureDescriptor* descriptor);
 
 // Create a parameter buffer for a simple texture view intended for use as an external texture. The
 // buffer contains the uniform parameters required by a shader to sample from an external texture.
@@ -93,7 +100,7 @@ class ExternalTextureBase : public ApiObjectBase {
     ObjectType GetType() const override;
     bool HasSingleView() const;
 
-    MaybeError ValidateCanUseInSubmitNow() const;
+    MaybeValError ValidateCanUseInSubmitNow() const;
     static Ref<ExternalTextureBase> MakeError(DeviceBase* device, StringView label = {});
 
     void APIExpire();
@@ -112,13 +119,13 @@ class ExternalTextureBase : public ApiObjectBase {
     enum class ExternalTextureState { Active, Expired, Destroyed };
     ExternalTextureBase(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label);
 
-    MaybeError ValidateRefresh();
-    MaybeError ValidateExpire();
+    MaybeValError ValidateRefresh();
+    MaybeValError ValidateExpire();
 
-    uint32_t mViewCount;
+    uint32_t mViewCount = 0;
     Ref<BufferBase> mParamsBuffer;
     std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat> mTextureViews;
-    ExternalTextureState mState;
+    ExternalTextureState mState = ExternalTextureState::Active;
 };
 }  // namespace dawn::native
 

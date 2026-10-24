@@ -31,14 +31,14 @@
 #include <memory>
 #include <vector>
 
-#include "dawn/common/LRUCache.h"
-#include "dawn/common/MutexProtected.h"
-#include "dawn/common/SerialQueue.h"
-#include "dawn/common/Sha3.h"
-#include "dawn/native/d3d/DeviceD3D.h"
-#include "dawn/native/d3d11/CommandRecordingContextD3D11.h"
-#include "dawn/native/d3d11/DeviceInfoD3D11.h"
-#include "dawn/native/d3d11/Forward.h"
+#include "src/dawn/common/LRUCache.h"
+#include "src/dawn/common/MutexProtected.h"
+#include "src/dawn/common/SerialQueue.h"
+#include "src/dawn/common/Sha3.h"
+#include "src/dawn/native/d3d/DeviceD3D.h"
+#include "src/dawn/native/d3d11/CommandRecordingContextD3D11.h"
+#include "src/dawn/native/d3d11/DeviceInfoD3D11.h"
+#include "src/dawn/native/d3d11/Forward.h"
 
 namespace dawn::native::d3d {
 struct CompiledShader;
@@ -118,6 +118,11 @@ class Device final : public d3d::Device {
         uint64_t size);
     void ReturnStagingBuffer(Ref<BufferBase>&& buffer);
 
+    // Size of the buffer returned by GetZeroBuffer().
+    static constexpr size_t kZeroBufferSize = 1024 * 1024;
+    // Get a cached buffer of kZeroBufferSize bytes filled with zeros.
+    ResultOrError<ID3D11Buffer*> GetZeroBuffer();
+
     ResultOrError<ComPtr<ID3D11VertexShader>> GetOrCreateVertexShader(
         const d3d::CompiledShader& args);
     ResultOrError<ComPtr<ID3D11PixelShader>> GetOrCreatePixelShader(
@@ -133,7 +138,7 @@ class Device final : public d3d::Device {
            const UnpackedPtr<DeviceDescriptor>& descriptor,
            const TogglesState& deviceToggles,
            Ref<DeviceBase::DeviceLostEvent>&& lostEvent);
-    static constexpr uint64_t kMaxStagingBufferSize = 512 * 1024;
+    static constexpr uint64_t kMaxStagingBufferSize = 512ULL * 1024;
 
     ResultOrError<Ref<BindGroupBase>> CreateBindGroupImpl(
         const UnpackedPtr<BindGroupDescriptor>& descriptor) override;
@@ -191,6 +196,9 @@ class Device final : public d3d::Device {
     // The cached staging buffers.
     std::vector<Ref<BufferBase>> mStagingBuffers;
     uint64_t mTotalStagingBufferSize = 0;
+
+    // The cached zero-filled buffer.
+    ComPtr<ID3D11Buffer> mZeroBuffer;
 
     // The cached shader objects:
     // We use the SHA3 hash of the shader blob as the key because it's computed based on the

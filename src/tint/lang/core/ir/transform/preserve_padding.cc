@@ -29,7 +29,7 @@
 
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
-#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/lang/core/ir/validator/validate.h"
 
 using namespace tint::core::fluent_types;     // NOLINT
 using namespace tint::core::number_suffixes;  // NOLINT
@@ -80,20 +80,20 @@ struct State {
     /// Check if a type contains padding bytes.
     /// @param type the type to check
     /// @returns true if the type contains padding bytes
-    bool ContainsPadding(const type::Type* type) {
+    bool ContainsPadding(const core::type::Type* type) {
         return tint::Switch(
             type,  //
-            [&](const type::Array* arr) {
+            [&](const core::type::Array* arr) {
                 auto* elem_ty = arr->ElemType();
                 if (arr->ImplicitStride() > elem_ty->Size()) {
                     return true;
                 }
                 return ContainsPadding(elem_ty);
             },
-            [&](const type::Matrix* mat) {
+            [&](const core::type::Matrix* mat) {
                 return mat->ColumnStride() > mat->ColumnType()->Size();
             },
-            [&](const type::Struct* str) {
+            [&](const core::type::Struct* str) {
                 uint32_t current_offset = 0;
                 for (auto* member : str->Members()) {
                     if (member->Offset() > current_offset) {
@@ -131,28 +131,28 @@ struct State {
             b.Append(func->Block(), [&] {
                 tint::Switch(
                     store_type,  //
-                    [&](const type::Array* arr) {
+                    [&](const core::type::Array* arr) {
                         b.LoopRange(0_u, u32(arr->ConstantCount().value()), 1_u, [&](Value* idx) {
                             auto* el_ptr = b.Access(ty.ptr(storage, arr->ElemType()), target, idx);
                             auto* el_value = b.Access(arr->ElemType(), value_param, idx);
-                            MakeStore(el_ptr->Result(), el_value->Result());
+                            MakeStore(el_ptr, el_value);
                         });
                     },
-                    [&](const type::Matrix* mat) {
+                    [&](const core::type::Matrix* mat) {
                         for (uint32_t i = 0; i < mat->Columns(); i++) {
                             auto* col_ptr =
                                 b.Access(ty.ptr(storage, mat->ColumnType()), target, u32(i));
                             auto* col_value = b.Access(mat->ColumnType(), value_param, u32(i));
-                            MakeStore(col_ptr->Result(), col_value->Result());
+                            MakeStore(col_ptr, col_value);
                         }
                     },
-                    [&](const type::Struct* str) {
+                    [&](const core::type::Struct* str) {
                         for (auto* member : str->Members()) {
                             auto* sub_ptr = b.Access(ty.ptr(storage, member->Type()), target,
                                                      u32(member->Index()));
                             auto* sub_value =
                                 b.Access(member->Type(), value_param, u32(member->Index()));
-                            MakeStore(sub_ptr->Result(), sub_value->Result());
+                            MakeStore(sub_ptr, sub_value);
                         }
                     });
 
@@ -169,7 +169,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> PreservePadding(Module& ir) {
-    core::ir::AssertValid(ir, kPreservePaddingCapabilities, "before core.PreservePadding");
+    core::ir::AssertValid(ir, "before core.PreservePadding");
 
     State{ir}.Process();
 

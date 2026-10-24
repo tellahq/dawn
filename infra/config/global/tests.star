@@ -334,8 +334,23 @@ targets.tests.isolated_script_test(
         "true_noop_merge",
     ],
     args = [
-        "-check",
+        "check",
         "-ir",
+    ],
+    binary = "fuzzer_corpus_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "tint_ir_mesa_fuzzer_corpus_check_tests",
+    mixins = [
+        "result_adapter_single",
+        "tint_fuzzer_corpus_common_args",
+        "true_noop_merge",
+    ],
+    args = [
+        "check",
+        "-ir",
+        "-mesa",
     ],
     binary = "fuzzer_corpus_tests",
 )
@@ -349,7 +364,24 @@ targets.tests.isolated_script_test(
         "tint_ir_merge",
     ],
     args = [
+        "generate",
         "-ir",
+    ],
+    binary = "fuzzer_corpus_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "tint_ir_mesa_fuzzer_corpus_generate_tests",
+    mixins = [
+        "result_adapter_single",
+        "tint_fuzzer_corpus_common_args",
+        "tint_fuzzer_corpus_generate_args",
+        "tint_ir_mesa_merge",
+    ],
+    args = [
+        "generate",
+        "-ir",
+        "-mesa",
     ],
     binary = "fuzzer_corpus_tests",
 )
@@ -378,7 +410,28 @@ targets.tests.isolated_script_test(
         ),
     ],
     args = [
-        "-check",
+        "check",
+    ],
+    binary = "fuzzer_corpus_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "tint_wgsl_mesa_fuzzer_corpus_check_tests",
+    mixins = [
+        "result_adapter_single",
+        "tint_fuzzer_corpus_common_args",
+        "true_noop_merge",
+        targets.mixin(
+            swarming = targets.swarming(
+                # These tests normally take ~15 minutes, but can flakily hit the
+                # default 20 minute I/O timeout and cannot currently be sharded.
+                io_timeout_sec = 1800,
+            ),
+        ),
+    ],
+    args = [
+        "check",
+        "-mesa",
     ],
     binary = "fuzzer_corpus_tests",
 )
@@ -391,5 +444,33 @@ targets.tests.isolated_script_test(
         "tint_fuzzer_corpus_generate_args",
         "tint_wgsl_merge",
     ],
+    args = [
+        "generate",
+    ],
     binary = "fuzzer_corpus_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "tint_wgsl_mesa_fuzzer_corpus_generate_tests",
+    mixins = [
+        "result_adapter_single",
+        "tint_fuzzer_corpus_common_args",
+        "tint_fuzzer_corpus_generate_args",
+        "tint_wgsl_mesa_merge",
+    ],
+    args = [
+        "generate",
+        "-mesa",
+    ],
+    binary = "fuzzer_corpus_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "litert_lm_benchmark",
+    mixins = [
+        "result_adapter_single",
+        "litert_lm_benchmark_merge",
+        "ci_only",
+    ],
+    binary = "litert_lm_advanced_main",
 )

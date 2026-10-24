@@ -71,7 +71,8 @@ TEST_F(SpirvWriterTest, If_FalseEmpty) {
     b.Append(func->Block(), [&] {
         auto* i = b.If(true);
         b.Append(i->True(), [&] {
-            b.Add(1_i, 1_i);
+            auto* l = b.Let("l", 1_i);
+            b.Add(l, 1_i);
             b.ExitIf(i);
         });
         b.Append(i->False(), [&] {  //
@@ -89,13 +90,13 @@ TEST_F(SpirvWriterTest, If_FalseEmpty) {
     auto result = Generate();
     ASSERT_EQ(result, Success) << result.Failure() << output_;
     EXPECT_INST(R"(
+          %4 = OpLabel
                OpSelectionMerge %5 None
                OpBranchConditional %true %6 %5
           %6 = OpLabel
-         %10 = OpBitcast %uint %int_1
-         %13 = OpBitcast %uint %int_1
-         %14 = OpIAdd %uint %10 %13
-         %15 = OpBitcast %int %14
+         %12 = OpBitcast %uint %l
+         %13 = OpIAdd %uint %12 %uint_1
+         %15 = OpBitcast %int %13
                OpBranch %5
           %5 = OpLabel
                OpReturn
@@ -111,7 +112,8 @@ TEST_F(SpirvWriterTest, If_TrueEmpty) {
             b.ExitIf(i);
         });
         b.Append(i->False(), [&] {
-            b.Add(1_i, 1_i);
+            auto* l = b.Let("l", 1_i);
+            b.Add(l, 1_i);
             b.ExitIf(i);
         });
         b.Return(func);
@@ -130,10 +132,9 @@ TEST_F(SpirvWriterTest, If_TrueEmpty) {
                OpSelectionMerge %5 None
                OpBranchConditional %true %5 %6
           %6 = OpLabel
-         %10 = OpBitcast %uint %int_1
-         %13 = OpBitcast %uint %int_1
-         %14 = OpIAdd %uint %10 %13
-         %15 = OpBitcast %int %14
+         %12 = OpBitcast %uint %l
+         %13 = OpIAdd %uint %12 %uint_1
+         %15 = OpBitcast %int %13
                OpBranch %5
           %5 = OpLabel
                OpReturn
@@ -465,6 +466,218 @@ TEST_F(SpirvWriterTest, If_Phi_Nested) {
          %11 = OpPhi %int %int_30 %7 %13 %10
                OpReturnValue %11
                OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_Let) {
+    auto* func = b.Function("foo", ty.i32());
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.i32()));
+        b.Append(i->True(), [&] {  //
+            b.ExitIf(i, b.Let(10_i));
+        });
+        b.Append(i->False(), [&] {  //
+            b.ExitIf(i, b.Let(20_i));
+        });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    ASSERT_EQ(result, Success) << result.Failure() << output_;
+    EXPECT_INST(R"(
+          %4 = OpLabel
+               OpSelectionMerge %5 None
+               OpBranchConditional %true %6 %7
+          %6 = OpLabel
+         %11 = OpCopyObject %int %int_10
+               OpBranch %5
+          %7 = OpLabel
+         %12 = OpCopyObject %int %int_20
+               OpBranch %5
+          %5 = OpLabel
+         %10 = OpPhi %int %11 %6 %12 %7
+               OpReturnValue %10
+               OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_Bitcast) {
+    auto* func = b.Function("foo", ty.i32());
+    auto* param = b.FunctionParam("param", ty.i32());
+    func->SetParams({param});
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.i32()));
+        b.Append(i->True(), [&] { b.ExitIf(i, b.Bitcast(ty.i32(), param)); });
+        b.Append(i->False(), [&] { b.ExitIf(i, param); });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func, 10_i));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    EXPECT_INST(R"(
+          %5 = OpLabel
+               OpSelectionMerge %6 None
+               OpBranchConditional %true %7 %8
+          %7 = OpLabel
+         %12 = OpCopyObject %int %param
+               OpBranch %6
+          %8 = OpLabel
+               OpBranch %6
+          %6 = OpLabel
+         %11 = OpPhi %int %12 %7 %param %8
+               OpReturnValue %11
+               OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_AbsUnsigned) {
+    auto* func = b.Function("foo", ty.u32());
+    auto* param = b.FunctionParam("param", ty.u32());
+    func->SetParams({param});
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.u32()));
+        b.Append(i->True(), [&] { b.ExitIf(i, b.Call(ty.u32(), core::BuiltinFn::kAbs, param)); });
+        b.Append(i->False(), [&] { b.ExitIf(i, param); });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func, 10_u));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    EXPECT_INST(R"(
+          %5 = OpLabel
+               OpSelectionMerge %6 None
+               OpBranchConditional %true %7 %8
+          %7 = OpLabel
+         %12 = OpCopyObject %uint %param
+               OpBranch %6
+          %8 = OpLabel
+               OpBranch %6
+          %6 = OpLabel
+         %11 = OpPhi %uint %12 %7 %param %8
+               OpReturnValue %11
+               OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_AnyScalar) {
+    auto* func = b.Function("foo", ty.bool_());
+    auto* param = b.FunctionParam("param", ty.bool_());
+    func->SetParams({param});
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.bool_()));
+        b.Append(i->True(), [&] { b.ExitIf(i, b.Call(ty.bool_(), core::BuiltinFn::kAny, param)); });
+        b.Append(i->False(), [&] { b.ExitIf(i, param); });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func, true));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    EXPECT_INST(R"(
+          %5 = OpLabel
+               OpSelectionMerge %6 None
+               OpBranchConditional %true %7 %8
+          %7 = OpLabel
+         %11 = OpCopyObject %bool %param
+               OpBranch %6
+          %8 = OpLabel
+               OpBranch %6
+          %6 = OpLabel
+         %10 = OpPhi %bool %11 %7 %param %8
+               OpReturnValue %10
+               OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_ConstructIdentity) {
+    auto* func = b.Function("foo", ty.i32());
+    auto* param = b.FunctionParam("param", ty.i32());
+    func->SetParams({param});
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.i32()));
+        b.Append(i->True(), [&] { b.ExitIf(i, b.Construct(ty.i32(), param)); });
+        b.Append(i->False(), [&] { b.ExitIf(i, param); });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func, 10_i));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    EXPECT_INST(R"(
+          %5 = OpLabel
+               OpSelectionMerge %6 None
+               OpBranchConditional %true %7 %8
+          %7 = OpLabel
+         %12 = OpCopyObject %int %param
+               OpBranch %6
+          %8 = OpLabel
+               OpBranch %6
+          %6 = OpLabel
+         %11 = OpPhi %int %12 %7 %param %8
+               OpReturnValue %11
+               OpFunctionEnd
+)");
+}
+
+TEST_F(SpirvWriterTest, If_Phi_ConstructNull) {
+    auto* func = b.Function("foo", ty.i32());
+    b.Append(func->Block(), [&] {
+        auto* i = b.If(true);
+        i->SetResult(b.InstructionResult(ty.i32()));
+        b.Append(i->True(), [&] { b.ExitIf(i, b.Construct(ty.i32())); });
+        b.Append(i->False(), [&] { b.ExitIf(i, 20_i); });
+        b.Return(func, i);
+    });
+
+    auto* eb = b.ComputeFunction("main");
+    b.Append(eb->Block(), [&] {
+        b.Let("x", b.Call(func));
+        b.Return(eb);
+    });
+
+    auto result = Generate();
+    EXPECT_INST(R"(
+          %4 = OpLabel
+               OpSelectionMerge %5 None
+               OpBranchConditional %true %6 %7
+          %6 = OpLabel
+               OpBranch %5
+          %7 = OpLabel
+               OpBranch %5
+          %5 = OpLabel
+         %10 = OpPhi %int %int_0 %6 %int_20 %7
+               OpReturnValue %10
+               OpFunctionEnd
+
 )");
 }
 

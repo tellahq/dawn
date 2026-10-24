@@ -47,21 +47,19 @@ inline constexpr uint32_t kMaxInterStageShaderVariables = 16u;
 inline constexpr uint64_t kAssumedMaxBufferSize =
     0x80000000u;  // Use 2 GB when the limit is unavailable
 
-// All Immediate constants are 32 bit
-inline constexpr uint32_t kImmediateConstantElementByteSize = sizeof(uint32_t);
+// All immediates are 32 bit
+inline constexpr uint32_t kImmediateElementByteSize = sizeof(uint32_t);
 
-// Total number of "internal" 32-bit immediates, which includes both external (user) immediates
-// and any other immediates used by Dawn internally (e.g. workgroup sizes).
-// Vulkan's min-max push constant limit is 128 bytes / 4 = 32 values,
-// while D3D12's limit is 256 bytes / 4 = 64 values, so we pick 32 here.
-inline constexpr uint32_t kMaxImmediateConstantsPerPipeline = 32u;
+// Cap the maximum number of immediates (internal + external) to 64 for fast bit algorithms on the
+// ImmediatesMask.
+inline constexpr uint32_t kMaxImmediateMaskBits = 64u;
 
-// Adapter Max limitation for user immediate constants is 64 bytes.
+// Adapter Max limitation for user immediates is 64 bytes.
 inline constexpr uint32_t kMaxImmediateDataBytes = 64u;
 
 // Known as 'Immediate Data' that users can update via the API
-inline constexpr uint32_t kMaxExternalImmediateConstantsPerPipeline =
-    kMaxImmediateDataBytes / kImmediateConstantElementByteSize;
+inline constexpr uint32_t kMaxExternalImmediatesPerPipeline =
+    kMaxImmediateDataBytes / kImmediateElementByteSize;
 
 // Default subgroup sizes.
 inline constexpr uint32_t kDefaultSubgroupMinSize = 4u;
@@ -124,6 +122,7 @@ inline constexpr uint32_t kReservedResourceTableSlots = 1000;
 // Required D3D12 shared buffer memory file mapping handle. The size must be a multiple of
 // `D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT` (65536) to hold a D3D12 buffer resource.
 inline constexpr uint32_t kD3D12SharedBufferMemoryFileMappingHandleSizeAlignment = 65536;
+inline constexpr uint32_t kD3D12SharedBufferMemoryHostPointerAlignment = 65536;
 }  // namespace dawn
 
 #endif  // SRC_DAWN_COMMON_CONSTANTS_H_
