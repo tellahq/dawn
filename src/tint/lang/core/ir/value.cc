@@ -76,6 +76,19 @@ void Value::ReplaceAllUsesWith(Value* replacement) {
     }
 }
 
+bool Usage::operator<(const Usage& other) const {
+    if (instruction == other.instruction) {
+        return operand_index < other.operand_index;
+    }
+    if (instruction == nullptr) {
+        return false;
+    }
+    if (other.instruction == nullptr) {
+        return true;
+    }
+    return *instruction < *other.instruction;
+}
+
 Vector<Usage, 4> Value::UsagesSorted() const {
     auto v = uses_.Vector();
     std::sort(v.begin(), v.end());
