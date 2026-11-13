@@ -60,18 +60,9 @@ struct Usage {
     /// A comparison helper for Usage.
     /// @param other the usage to compare against
     /// @returns true if `this` is less then `other`.
-    bool operator<(const Usage& other) const {
-        if (instruction == nullptr && other.instruction != nullptr) {
-            return false;
-        }
-        if (instruction != nullptr && other.instruction == nullptr) {
-            return true;
-        }
-        if (instruction == other.instruction) {
-            return operand_index < other.operand_index;
-        }
-        return instruction < other.instruction;
-    }
+    /// Instructions are ordered by their ID, which is the order they were created in, so the
+    /// result does not depend on where the instructions were allocated.
+    bool operator<(const Usage& other) const;
 };
 
 /// Value in the IR.

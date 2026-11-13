@@ -25,6 +25,8 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#include <functional>
+
 #include "gmock/gmock.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
@@ -133,6 +135,29 @@ TEST_F(IR_ValueTest, UsageComparison) {
 
     EXPECT_LT(u, v);
     EXPECT_LT(v, w);
+}
+
+TEST_F(IR_ValueTest, UsageComparison_ByIdNotByAddress) {
+    // Each module allocates its own instructions, so the instructions of one of the two modules
+    // have the higher addresses, whatever their IDs.
+    Module other;
+    Builder other_b{other};
+
+    Instruction* first = mod.CreateInstruction<Construct>(b.InstructionResult(ty.i32()));
+    Instruction* second = mod.CreateInstruction<Construct>(b.InstructionResult(ty.i32()));
+    Instruction* other_first =
+        other.CreateInstruction<Construct>(other_b.InstructionResult(other.Types().i32()));
+    Instruction* other_second =
+        other.CreateInstruction<Construct>(other_b.InstructionResult(other.Types().i32()));
+
+    std::less<Instruction*> address_before;
+    Instruction* earlier = address_before(second, other_first) ? other_first : first;
+    Instruction* later = address_before(second, other_first) ? second : other_second;
+    ASSERT_TRUE(*earlier < *later);
+    ASSERT_TRUE(address_before(later, earlier));
+
+    EXPECT_LT((Usage{earlier, 0}), (Usage{later, 0}));
+    EXPECT_FALSE((Usage{later, 0}) < (Usage{earlier, 0}));
 }
 
 }  // namespace
